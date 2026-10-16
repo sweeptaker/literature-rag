@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ragmini · 文献 RAG 最小演示</title>
+<style>
+  :root{
+    --bg:#f6f8fa; --panel:#fff; --line:#d8dee4; --line-soft:#eaeef2; --bg-soft:#eaeef2;
+    --ink:#1f2328; --ink-2:#57606a; --ink-3:#8b949e;
+    --accent:#0969da; --accent-soft:#ddf4ff;
+    --ok:#1a7f37; --ok-soft:#dafbe1; --warn:#9a6700; --warn-soft:#fff8c5;
+    --bad:#cf222e; --bad-soft:#ffebe9;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1040px;margin:0 auto;padding:22px 18px 60px}
+  h1{margin:0 0 4px;font-size:19px}
+  header p{margin:0;color:var(--ink-2);font-size:13px}
+  .meta{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .chip{font-size:12px;color:var(--ink-2);background:var(--panel);border:1px solid var(--line);
+    border-radius:999px;padding:2px 10px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:15px;margin:13px 0}
+  .card h2{margin:0 0 11px;font-size:14px;display:flex;align-items:center;gap:8px;font-weight:600}
+  .step{width:20px;height:20px;border-radius:50%;background:var(--accent-soft);color:var(--accent);
+    font-size:11px;display:inline-flex;align-items:center;justify-content:center;font-weight:700}
+  .sub{color:var(--ink-3);font-weight:400;font-size:12px}
+  textarea{width:100%;min-height:60px;resize:vertical;padding:10px 12px;font:inherit;color:var(--ink);
+    border:1px solid var(--line);border-radius:8px;outline:none}
+  textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:10px}
+  button{font:inherit;font-weight:600;cursor:pointer;border-radius:8px;padding:8px 18px;
+    border:1px solid var(--line);background:#f6f8fa;color:var(--ink)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button:disabled{opacity:.55;cursor:not-allowed}
+  select,input[type=number]{font:inherit;padding:6px 8px;border:1px solid var(--line);
+    border-radius:8px;background:#fff;color:var(--ink)}
+  label.opt{font-size:12px;color:var(--ink-2);display:inline-flex;align-items:center;gap:5px}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px}
+  .stat{background:var(--bg);border:1px solid var(--line-soft);border-radius:8px;padding:8px 10px}
+  .stat .k{font-size:11px;color:var(--ink-3)} .stat .v{font-size:15px;font-weight:600}
+  .flow{display:grid;gap:7px}
+  .frow{display:grid;grid-template-columns:104px 1fr 122px;gap:10px;align-items:center;font-size:12px}
+  .frow .nm{color:var(--ink-2)} .frow .ms{color:var(--ink-3);text-align:right}
+  .bar{height:8px;background:var(--bg-soft);border-radius:99px;overflow:hidden}
+  .bar>i{display:block;height:100%;background:var(--accent);transition:width .3s}
+  details.ev{border:1px solid var(--line-soft);border-radius:8px;background:#fff;margin-bottom:7px;overflow:hidden}
+  summary{cursor:pointer;padding:9px 12px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;
+    list-style:none;font-size:13px}
+  summary::-webkit-details-marker{display:none}
+  .rk{font-weight:700;color:var(--accent)}
+  .tag{font-size:11px;border-radius:99px;padding:1px 8px}
+  .t-direct{background:var(--ok-soft);color:var(--ok)} .t-indirect{background:var(--warn-soft);color:var(--warn)}
+  .t-counter{background:var(--bad-soft);color:var(--bad)} .t-bg{background:var(--accent-soft);color:var(--accent)}
+  .t-none{background:var(--bg-soft);color:var(--ink-2)}
+  .conf{font-size:11px;border:1px solid var(--line);border-radius:99px;padding:1px 8px;color:var(--ink-2)}
+  .score{font-size:11px;color:var(--ink-3);margin-left:auto}
+  .txt{padding:0 12px 11px;color:var(--ink-2);font-size:13px;white-space:pre-wrap;max-height:300px;overflow:auto}
+  .srcline{font-size:11px;color:var(--ink-3);padding:0 12px 7px}
+  .hl{outline:2px solid var(--accent);background:var(--accent-soft)}
+  .impact{color:var(--accent);cursor:pointer;font-weight:700;text-decoration:none;padding:0 1px;border-radius:3px}
+  .impact:hover{background:var(--accent-soft)}
+  .answer{white-space:pre-wrap;font-size:14px;line-height:1.8}
+  .err{background:var(--bad-soft);border:1px solid #ffd7d5;color:var(--bad);padding:10px 12px;
+    border-radius:8px;font-size:13px}
+  .hint{color:var(--ink-3);font-size:12px}
+  code{background:rgba(0,0,0,.06);border-radius:4px;padding:1px 5px;
+    font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+  .err code{display:block;margin-top:6px;white-space:pre-wrap;word-break:break-all}
+  .notice{margin-top:11px;padding:9px 12px;border-radius:8px;font-size:12.5px;
+    background:var(--warn-soft);border:1px solid #eed888;color:#6b4d00}
+  .wexp{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:6px;margin-bottom:9px}
+  .wexp .w{font-size:11px;color:var(--ink-2);background:var(--bg);border:1px solid var(--line-soft);
+    border-radius:6px;padding:4px 8px;display:flex;justify-content:space-between}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>ragmini · 文献 RAG 最小演示</h1>
+    <p>提问 → 意图判断 → 粗筛召回 → 五因子融合 → 文献去重 → 证据分级 → 神经重排 → Top-K 证据 → 生成带引用答案</p>
+    <div class="meta" id="meta"><span class="chip">正在读取状态…</span></div>
+    <div id="modebar"></div>
+  </header>
+
+  <section class="card">
+    <h2><span class="step">?</span>提问 <span class="sub">回车提交，Shift+Enter 换行</span></h2>
+    <textarea id="q" placeholder="例如：干旱如何影响土壤微生物群落组装？"></textarea>
+    <div class="row">
+      <button class="primary" id="go">检索并生成</button>
+      <label class="opt">意图
+        <select id="intent">
+          <option value="">自动</option>
+          <option value="concept">concept 概念</option>
+          <option value="evidence">evidence 证据</option>
+          <option value="judgement">judgement 判断</option>
+        </select>
+      </label>
+      <label class="opt">召回 N <input type="number" id="nrecall" min="10" max="500" placeholder="自动" style="width:74px"></label>
+      <label class="opt">topk <input type="number" id="topk" min="1" max="30" value="10" style="width:58px"></label>
+      <label class="opt"><input type="checkbox" id="norank"> 关闭重排</label>
+      <label class="opt"><input type="checkbox" id="nodedup"> 关闭去重</label>
+      <label class="opt"><input type="checkbox" id="nonorm"> 关闭规范化</label>
+      <span class="hint" id="timer"></span>
+    </div>
+    <div id="errbox"></div>
+  </section>
+
+  <section class="card" id="c0" hidden>
+    <h2><span class="step">0</span>查询规范化 <span class="sub">错别字纠正/术语统一，仅用于检索</span></h2>
+    <div id="normbox"></div>
+  </section>
+  <section class="card" id="c1" hidden>
+    <h2><span class="step">1</span>意图识别 <span class="sub">决定召回宽度 N</span></h2>
+    <div class="stats" id="s-intent"></div>
+  </section>
+  <section class="card" id="c2" hidden>
+    <h2><span class="step">2</span>粗筛（Recall）<span class="sub">余弦 Top-N</span></h2>
+    <div class="stats" id="s-recall"></div>
+    <div class="hint" style="margin-top:9px">召回候选（前 30）：</div>
+    <div id="recall-list" class="hint" style="margin-top:5px"></div>
+  </section>
+  <section class="card" id="c3" hidden>
+    <h2><span class="step">3</span>细筛（Rerank）<span class="sub">五因子融合 + 去重 + 证据分级 + 神经重排</span></h2>
+    <div class="wexp" id="weights"></div>
+    <div class="flow" id="flow"></div>
+  </section>
+  <section class="card" id="c4" hidden>
+    <h2><span class="step">4</span>Top-K 证据 <span class="sub">点击展开原文</span></h2>
+    <div id="evlist"></div>
+  </section>
+  <section class="card" id="c5" hidden>
+    <h2><span class="step">5</span>答案 <span class="sub">[n] 为证据编号，点击高亮</span></h2>
+    <div class="answer" id="answer"></div>
+    <div class="hint" id="usage" style="margin-top:9px"></div>
+  </section>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const QS = new URLSearchParams(location.search);
+const IS_FILE = location.protocol === "file:";
+/* 以 file:// 打开时相对路径会被解析成 file:///api/...，必须显式指向本机服务。
+   端口可用 ?port=8888 覆盖；也可用 ?api=http://127.0.0.1:8765 指定完整地址。 */
+const API_BASE = IS_FILE ? (QS.get("api") || `http://127.0.0.1:${QS.get("port") || "8765"}`) : "";
+const START_CMD = "python run.py serve";
+
+const STAGE_CN = {normalize:"查询规范化", intent:"意图分类", recall:"粗筛", fusion:"融合",
+                  dedup:"文献去重", grade:"证据分级", rerank:"神经重排", select:"最终选取"};
+const NORM_SRC = {llm:"已规范化", off:"已关闭", fallback:"未启用", rejected:"结果被拒（疑似改写）",
+                  error:"调用失败"};
+const CLS_CN = {direct_support:"直接支持", indirect_support:"间接支持",
+                counterevidence:"反面证据", related_background:"相关背景", unclassified:"未分类"};
+const CLS_TAG = {direct_support:"t-direct", indirect_support:"t-indirect",
+                 counterevidence:"t-counter", related_background:"t-bg", unclassified:"t-none"};
+
+if(IS_FILE){
+  $("#modebar").innerHTML = `<div class="notice">当前以本地文件方式打开页面，已自动连接本地服务
+    <code>${API_BASE}</code>。若检索失败，说明服务未启动，请在包目录执行
+    <code>${START_CMD}</code>，或直接访问
+    <a href="${API_BASE}/" target="_blank">${API_BASE}/</a>。</div>`;
+}
+
+// 期刊展示：规范刊名 + 档位 + JIF（档位缺失时只显示刊名）
+function jn(c){
+  const n = c.journal_name || c.journal || "";
+  const t = c.journal_tier ? `${c.journal_tier}档` : "";
+  const q = c.journal_quartile || "";
+  const f = c.journal_jif ? `IF ${c.journal_jif}` : "";
+  const tag = [t,q,f].filter(Boolean).join(" ");
+  return tag ? `${n}（${tag}）` : n;
+}
+
+function esc(t){ return (t??"").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
+function bar(v){ return `<div class="bar"><i style="width:${Math.max(0,Math.min(1,v))*100}%"></i></div>`; }
+function netErrBox(e, url){
+  const isNet = (e instanceof TypeError) || /Load failed|Failed to fetch|NetworkError/i.test(String(e));
+  if(isNet) return `<div class="err">无法连接本地检索服务 <code>${esc(url)}</code>
+    请先启动服务：<code>${esc(START_CMD)}</code>
+    然后访问 <a href="${esc(API_BASE||"http://127.0.0.1:8765")}/">${esc(API_BASE||"http://127.0.0.1:8765")}/</a>。</div>`;
+  return `<div class="err">请求失败：${esc(String(e))}</div>`;
+}
+
+fetch(API_BASE + "/api/status").then(r=>r.json()).then(s=>{
+  const items = [
+    ["语料切片", s.corpus_chunks ?? "—"], ["向量维度", s.dim ?? "—"],
+    ["嵌入模型", s.embedding], ["重排", s.reranker + (s.reranker_ready ? "" : "（未就绪）")],
+    ["设备", s.device],
+    ["召回宽度", Object.entries(s.intent_n||{}).map(([k,v])=>`${k}=${v}`).join(" / ")],
+    ["重排池", s.rerank_pool + " / α=" + s.rerank_alpha],
+    ["规范化", s.query_norm ? "开" : "关"],
+    ["生成模型", s.api_key ? "已配置 Key" : "未配置 Key（仅检索）"],
+  ];
+  $("#meta").innerHTML = items.map(([k,v])=>`<span class="chip">${k}：${v}</span>`).join("");
+  $("#weights").innerHTML = Object.entries(s.fusion_weights||{})
+    .map(([k,v])=>`<span class="w"><span>${k}</span><b>${v}</b></span>`).join("");
+}).catch(e=>{
+  $("#meta").innerHTML = `<span class="chip" style="color:var(--bad)">未连接到检索服务</span>`;
+  $("#errbox").innerHTML = netErrBox(e, API_BASE + "/api/status");
+});
+
+function reset(){
+  ["c0","c1","c2","c3","c4","c5"].forEach(id=>$("#"+id).hidden=true);
+  ["normbox","s-intent","s-recall","recall-list","evlist","answer","usage","errbox"]
+    .forEach(id=>$("#"+id).innerHTML="");
+  $("#flow").innerHTML=""; $("#timer").textContent="";
+}
+function showStages(stages){
+  $("#c3").hidden=false;
+  const max = Math.max(...stages.map(s=>s.elapsed_ms), 1);
+  $("#flow").innerHTML = stages.map(s=>`<div class="frow">
+    <span class="nm">${STAGE_CN[s.name]||s.name}</span>${bar(s.elapsed_ms/max)}
+    <span class="ms">${s.count} 条 · ${s.elapsed_ms} ms</span></div>`).join("");
+}
+function renderNorm(ev){
+  $("#c0").hidden=false;
+  const src = NORM_SRC[ev.norm_source] || ev.norm_source || "—";
+  if(!ev.changed){
+    $("#normbox").innerHTML = `<div class="stats">
+      <div class="stat" style="grid-column:1/-1"><div class="k">检索用语句</div>
+      <div class="v" style="font-size:13px;font-weight:400">${esc(ev.original)}</div></div>
+      <div class="stat" style="grid-column:1/-1"><div class="k">判定</div>
+      <div class="v" style="font-size:13px;font-weight:400">未发现需纠正的内容（${esc(src)}）</div></div></div>`;
+    return;
+  }
+  const corr = (ev.corrections||[]).map(c=>
+    `<span class="w"><span>${esc(c.from)}</span><b>→ ${esc(c.to)}</b></span>`).join("");
+  $("#normbox").innerHTML = `<div class="stats">
+    <div class="stat"><div class="k">原文（用于作答）</div>
+      <div class="v" style="font-size:13px;font-weight:400">${esc(ev.original)}</div></div>
+    <div class="stat"><div class="k">规范化后（用于检索）</div>
+      <div class="v" style="font-size:13px;font-weight:400;color:var(--ok)">${esc(ev.normalized)}</div></div>
+    <div class="stat"><div class="k">来源</div>
+      <div class="v" style="font-size:13px;font-weight:400">${esc(src)}</div></div></div>
+    ${corr?`<div class="hint" style="margin-top:9px">纠正明细：</div><div class="wexp">${corr}</div>`:""}`;
+}
+function renderIntent(d){
+  $("#c1").hidden=false;
+  $("#s-intent").innerHTML = `
+    <div class="stat"><div class="k">意图</div><div class="v">${d.intent}</div></div>
+    <div class="stat"><div class="k">置信度</div><div class="v">${(d.confidence??0).toFixed(2)}</div></div>
+    <div class="stat"><div class="k">召回宽度 N</div><div class="v">${d.n_recall}</div></div>
+    <div class="stat"><div class="k">来源</div><div class="v" style="font-size:13px">${d.source}</div></div>
+    <div class="stat" style="grid-column:1/-1"><div class="k">判定理由</div>
+      <div class="v" style="font-size:13px;font-weight:400">${esc(d.reason||"—")}</div></div>`;
+}
+function renderRecall(items, corpus){
+  $("#c2").hidden=false;
+  $("#s-recall").innerHTML = `
+    <div class="stat"><div class="k">候选数</div><div class="v">${items.length}</div></div>
+    <div class="stat"><div class="k">全库切片</div><div class="v">${corpus}</div></div>
+    <div class="stat" style="grid-column:span 2"><div class="k">说明</div>
+      <div class="v" style="font-size:13px;font-weight:400">图/表题注等噪声已在切片阶段剔除</div></div>`;
+  $("#recall-list").innerHTML = items.map((c,i)=>
+    `<div>${String(i+1).padStart(2,"0")}. sem=${(c.semantic??0).toFixed(3)} ·
+      ${esc(jn(c))}(${c.year||"?"}) · ${esc(c.label||"")} · p${c.page_start}-${c.page_end}</div>`
+  ).join("");
+}
+function renderEvidence(items){
+  $("#c4").hidden=false;
+  $("#evlist").innerHTML = items.map(c=>{
+    const cls = CLS_TAG[c.evidence_class]||"t-none";
+    const rr = (c.rerank_s!=null) ? `重排 ${c.rerank_s.toFixed(3)} · ` : "";
+    return `<details class="ev" id="ev-${c.rank}"><summary>
+      <span class="rk">[${c.rank}]</span>
+      <span class="tag ${cls}">${CLS_CN[c.evidence_class]||c.evidence_class}</span>
+      <span class="conf">置信 ${c.confidence}</span>
+      <span>${esc(jn(c))} · ${c.year||"?"} · ${esc(c.label||"")} · p${c.page_start}-${c.page_end}</span>
+      <span class="score">final ${(c.final||0).toFixed(4)} · fusion ${(c.fusion||0).toFixed(4)} · ${rr}sem ${(c.semantic||0).toFixed(3)}</span>
+      </summary>
+      <div class="srcline">DOI ${esc(c.doi||"—")} · chunk ${esc((c.chunk_uid||"").slice(0,12))}</div>
+      <div class="txt">${esc(c.text||"")}</div></details>`;
+  }).join("");
+}
+function renderAnswer(txt){
+  $("#answer").innerHTML = esc(txt).replace(/\[(\d+(?:\s*,\s*\d+)*)\]/g, (m,g)=>
+    "["+g.split(",").map(x=>`<a class="impact" data-n="${x.trim()}">${x.trim()}</a>`).join(",")+"]");
+  $("#answer").querySelectorAll("a.impact").forEach(a=>{
+    a.onclick = ()=>{
+      const d = document.getElementById("ev-"+a.dataset.n);
+      if(!d) return;
+      d.open = true; d.scrollIntoView({behavior:"smooth", block:"center"});
+      d.classList.add("hl"); setTimeout(()=>d.classList.remove("hl"), 1600);
+    };
+  });
+}
+
+let busy = false;
+async function go(){
+  if(busy) return;
+  const q = $("#q").value.trim();
+  if(!q){ $("#errbox").innerHTML = `<div class="err">请输入问题。</div>`; return; }
+  busy = true; $("#go").disabled = true; reset();
+  const t0 = performance.now();
+  const tick = setInterval(()=>{ $("#timer").textContent = `已用时 ${((performance.now()-t0)/1000).toFixed(1)} s`; }, 100);
+  const opts = {intent:$("#intent").value||null, n_recall:$("#nrecall").value||null,
+                topk:$("#topk").value||null, no_rerank:$("#norank").checked,
+                no_dedup:$("#nodedup").checked, no_norm:$("#nonorm").checked};
+  let answerText = "", stagesSeen = [], corpus = "—";
+  try{
+    const url = API_BASE + "/api/ask_stream";
+    const r = await fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({question:q, options:opts})});
+    if(!r.ok){
+      let detail = ""; try{ const j = await r.json(); detail = j.error ? `：${j.error}` : ""; }catch(_){}
+      throw new Error("HTTP " + r.status + detail);
+    }
+    if(!r.body) throw new Error("当前浏览器不支持流式读取响应体");
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    let buf = "";
+    while(true){
+      const {done, value} = await reader.read();
+      if(done) break;
+      buf += dec.decode(value, {stream:true});
+      const lines = buf.split("\n"); buf = lines.pop();
+      for(const line of lines){
+        if(!line.trim()) continue;
+        let ev; try{ ev = JSON.parse(line); }catch(e){ continue; }
+        if(ev.type==="start") corpus = ev.corpus_chunks;
+        else if(ev.type==="stage"){
+          stagesSeen.push(ev); showStages(stagesSeen);
+          if(ev.name==="normalize") renderNorm(ev);
+        }
+        else if(ev.type==="intent") renderIntent(ev);
+        else if(ev.type==="recall_preview"){ renderRecall(ev.items, corpus); }
+        else if(ev.type==="candidates"){
+          renderEvidence(ev.items);
+          if(ev.weights) $("#weights").innerHTML = Object.entries(ev.weights)
+            .map(([k,v])=>`<span class="w"><span>${k}</span><b>${v}</b></span>`).join("");
+        }
+        else if(ev.type==="delta"){ answerText += ev.text; $("#c5").hidden=false; renderAnswer(answerText); }
+        else if(ev.type==="done"){ $("#usage").textContent = `检索耗时 ${ev.elapsed_ms} ms`; }
+        else if(ev.type==="error"){ $("#errbox").innerHTML = `<div class="err">${esc(ev.message)}</div>`; }
+      }
+    }
+  }catch(e){
+    $("#errbox").innerHTML = netErrBox(e, API_BASE + "/api/ask_stream");
+  }finally{
+    clearInterval(tick);
+    $("#timer").textContent = `总用时 ${((performance.now()-t0)/1000).toFixed(1)} s`;
+    busy = false; $("#go").disabled = false;
+  }
+}
+$("#go").onclick = go;
+$("#q").addEventListener("keydown", e=>{ if(e.key==="Enter" && !e.shiftKey){ e.preventDefault(); go(); } });
+$("#q").value = "干旱如何影响土壤微生物群落组装？";
+</script>
+</body>
+</html>

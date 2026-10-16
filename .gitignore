@@ -1,0 +1,43 @@
+# ============================================================================
+# ragmini 的 .gitignore
+# 原则：仓库只放「可分发的源文件」；运行时产物、模型权重、语料、数据库一律不入库。
+# ============================================================================
+
+# ---- Python 运行时 ----
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# ---- 操作系统 / 编辑器残留 ----
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/
+
+# ---- 运行时生成的大目录（install / ingest / embed 后出现）----
+# 模型权重（约 4.6 GB）、SQLite 库、切片缓存、导出 CSV、用户放入的 PDF
+模型/
+数据库/
+中间文件/
+pdf/
+subpdf/
+hf_cache/
+
+# ---- 数据库与向量缓存 ----
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.npy
+*.npz
+
+# ---- 分发包：走 GitHub Releases，不进仓库树 ----
+*.zip
+
+# ---- 密钥：绝不入库 ----
+*.key
+.env

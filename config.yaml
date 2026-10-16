@@ -1,0 +1,86 @@
+# ============================================================================
+# ragmini 配置（全部为「相对本包根目录」的路径，可直接拷贝到任何机器）
+#
+# 说明：这里只列出最常调整的键；**未列出的键自动使用内置默认值**
+#       （默认值全集见 ragcore/config.py 的 DEFAULTS）。
+#       删掉某个键即回退默认值；也可用环境变量临时覆盖：
+#         RAGMINI_ROOT / RAGMINI_PDF_DIR / RAGMINI_DB / RAGMINI_OUT_DIR / RAGMINI_MODEL_DIR
+# ============================================================================
+
+paths:
+  pdf_dir: "pdf"                  # 存放待入库 PDF 的目录（也可用 run.py ingest 直接指定）
+  db: "数据库/rag.sqlite"          # SQLite 数据库文件
+  out_dir: "中间文件"              # 中间产物（向量矩阵缓存、导出 CSV、临时目录）
+  model_dir: "模型"                # 模型权重父目录（其下按模型短名分子目录）
+  journal_metrics: "journal_metrics.yaml"  # 期刊分级与指标表（人工复核的检索结果）
+  journal_index: "journal_index.tsv"       # 刊名索引（enrich 导出，PDF 元数据抽取用）
+
+fusion:                           # 多因子权重融合 final = Σ wᵢ·scoreᵢ
+  # 已按要求删除被引次数（citation）因子：原为 0.03 的占位（无数据源、恒为 0），
+  # 去掉后把剩余 0.97 归一化回 1.0，各因子相对比例不变。
+  weights:
+    semantic: 0.722               # 余弦相似度
+    journal: 0.103                # 期刊档位（1–6 档，见 journal_metrics.yaml）
+    recency: 0.082                # 发表年份新旧
+    claim: 0.072                  # 论点类型（实证性表述）
+    section: 0.021                # 章节权重
+  journal_default_score: 0.45     # 期刊未知（无 JIF 也无 JCR 分区）时的取值
+  journal_overrides: {}           # 手工覆盖：{"theismejournal": 0.70}
+
+corpus:
+  target_tokens: 350              # 单个切片目标 token 数
+  overlap: 0.15                   # 相邻切片重叠比例
+  min_tokens: 120                 # 过短切片并入前一片
+  max_tokens: 700                 # 过长切片强制切分
+  min_doc_chars: 2000             # 正文短于此值的 PDF 跳过
+  # 只保留这 8 类章节；命中规范词典但不在此列的章节（参考文献、致谢、关键词等）整段丢弃
+  keep_labels:
+    - Abstract
+    - Introduction
+    - Methods
+    - Results
+    - "Results and Discussion"
+    - Discussion
+    - Conclusion
+    - Front Matter
+
+models:
+  embedding: "BAAI/bge-m3"                    # 嵌入模型（1024 维，中英双语）
+  reranker: "BAAI/bge-reranker-v2-m3"         # 神经重排（本地缺失时自动跳过）
+  device: "auto"                              # auto | cpu | cuda | mps
+  batch_size: 16                              # 向量化批大小（内存不足可降到 8）
+  embed_max_length: 1024                      # 切片编码长度上限
+  query_max_length: 256                       # 查询编码长度上限
+
+intent:                           # 意图 → 召回宽度 N
+  use_llm: true                   # 有 API Key 时用 LLM 分类，否则用关键词规则
+  n_by_intent:
+    concept: 150
+    judgement: 120
+    evidence: 100
+  n_default: 120
+
+query_norm:                       # 查询规范化（错别字纠正 + 术语统一，只作用于检索侧）
+  enabled: true
+  max_expansion: 3.0              # 结果长度上限倍数（防改写护栏）
+
+rerank:
+  enabled: true
+  pool: 50                        # 参与重排的候选数上限（越大越准也越慢）
+  alpha: 0.6                      # 最终分 = alpha×重排分 + (1-alpha)×融合分
+
+output:
+  topk: 10                        # 最终证据条数
+  snippet_chars: 1200             # 每条证据送入生成模型的字符上限
+
+llm:                              # 生成模型（任何 OpenAI 兼容接口均可）
+  base_url: "https://api.deepseek.com/v1"
+  model: "deepseek-chat"
+  api_key_env: "DEEPSEEK_API_KEY" # 建议用环境变量，不要把 Key 写进本文件
+  temperature: 0.2
+  max_tokens: 1500
+  timeout: 60
+
+web:
+  host: "127.0.0.1"               # 只监听本机
+  port: 8765

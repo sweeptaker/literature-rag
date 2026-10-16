@@ -1,0 +1,48 @@
+# 由 ragcore/journals.py 依据 journal_metrics.yaml 生成
+# 格式：规范刊名<TAB>别名(以 | 分隔)<TAB>ISSN(以 | 分隔)
+# 供 ragcore/pdf_meta.py 把 PDF 里的缩写刊名映射为规范全名
+AMB Express	AMB Expr	2191-0855
+Applied and Environmental Microbiology	Appl Environ Microbiol|AEM	0099-2240|1098-5336
+Applied Microbiology and Biotechnology	Appl Microbiol Biotechnol|Appl Microbiol Biot	0175-7598|1432-0614
+Applied Soil Ecology	Appl Soil Ecol	0929-1393|1873-0273
+Aquatic Microbial Ecology	Aquat Microb Ecol	0948-3055|1616-1564
+BioEssays		0265-9247|1521-1878
+Biology Letters	Biol Lett	1744-9561|1744-957X
+Cell		0092-8674|1097-4172
+Ecography		0906-7590|1600-0587
+Ecological Monographs	Ecol Monogr	0012-9615|1557-7015
+Ecology		0012-9658|1939-9170
+Ecology Letters	Ecol Lett	1461-023X|1461-0248
+Environmental Microbiology	Environ Microbiol	1462-2912|1462-2920
+Environmental Modelling & Software	Environ Model Softw|Environmental Modelling and Software	1364-8152|1873-6726
+Functional Ecology	Funct Ecol	0269-8463|1365-2435
+Global Biogeochemical Cycles	Global Biogeochem Cycles|Glob Biogeochem Cy	0886-6236|1944-9224
+Global Change Biology	Glob Change Biol|GCB	1354-1013|1365-2486
+Inland Waters		2044-2041|2044-205X
+Journal of Animal Ecology	J Anim Ecol	0021-8790|1365-2656
+Journal of Ecology	J Ecol	0022-0477|1365-2745
+Journal of Experimental Marine Biology and Ecology	J Exp Mar Biol Ecol	0022-0981|1879-1603
+Microbial Ecology	Microb Ecol	0095-3628|1432-184X
+Microbiome		2049-2618
+Molecular Ecology	Mol Ecol	0962-1083|1365-294X
+Nature		0028-0836|1476-4687
+Nature Climate Change	Nat Clim Chang	1758-678X|1758-6798
+Nature Communications	Nat Commun	2041-1723
+Nature Ecology & Evolution	Nat Ecol Evol|Nature Ecology and Evolution	2397-334X
+Nature Microbiology	Nat Microbiol	2058-5276
+Nature Reviews Microbiology	Nat Rev Microbiol	1740-1526|1740-1534
+Oikos		0030-1299|1600-0706
+Philosophical Transactions of the Royal Society B	Philos Trans R Soc B|Phil Trans R Soc B|Philosophical Transactions of the Royal Society B-Biological Sciences	0962-8436|1471-2970
+Plant and Soil	Plant Soil	0032-079X|1573-5036
+PLOS Biology	PLoS Biol	1544-9173|1545-7885
+PLOS ONE		1932-6203
+Proceedings of the National Academy of Sciences	PNAS|Proc Natl Acad Sci USA|Proc Natl Acad Sci|P Natl Acad Sci USA|Proceedings of the National Academy of Sciences of the United States of America	0027-8424|1091-6490
+Science		0036-8075|1095-9203
+Science Advances	Sci Adv	2375-2548
+Scientific Reports	Sci Rep	2045-2322
+Soil Biology and Biochemistry	Soil Biol Biochem|Soil Biology & Biochemistry	0038-0717|1879-3428
+Soil & Tillage Research	Soil Tillage Res|Soil and Tillage Research	0167-1987|1879-3444
+The American Naturalist	Am Nat|American Naturalist	0003-0147|1537-5323
+The ISME Journal	ISME J|ISME Journal|ISME Journal of Microbial Ecology	1751-7362|1751-7370
+Trends in Ecology & Evolution	Trends Ecol Evol|TREE|Trends in Ecology and Evolution	0169-5347|1872-8383
+Water Research	Water Res	0043-1354|1879-2448

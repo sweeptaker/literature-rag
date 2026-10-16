@@ -1,0 +1,501 @@
+# ============================================================================
+# 期刊分级与指标表（分级规则的「数据来源」）
+# ----------------------------------------------------------------------------
+# 用途：
+#   1) ragcore/journals.py 读取本表 → 写入数据库 journals 表
+#      → 检索时按「档位」给 journal 因子打分（替代原先的硬编码期刊权重）；
+#   2) 同时导出 journal_index.tsv，供 PDF 元数据抽取阶段把缩写刊名
+#      （Appl Microbiol Biotechnol / Glob Change Biol / AMB Expr …）映射为规范全名。
+#
+# 数据来源与口径（重要）：
+#   * jif  = 2025 年度 Journal Impact Factor（科睿唯安 JCR 2026 年 6 月发布），
+#            来自公开检索结果（期刊官网 / 科研通 / 恩特学术 / justscience / 维普 等）。
+#   * quartile = 该刊原文标注的 JCR 分区（多学科期刊取收录学科中的最优分区）。
+#   * 每条记录都带 source 与 evidence，便于人工复核；凡来源互相冲突或未能检索到的，
+#     一律留空并交给 AI 兜底（见 sources.ai_fallback），**不臆造数值**。
+#
+# 档位规则（用户口径，由代码确定性计算，AI 只负责提供 jif / quartile）：
+#   1 档 旗舰顶刊            Nature / Science / Cell
+#   2 档 三大刊子刊          Nature 系列、Science 系列（正刊外）、Cell Press 系列、npj 系列
+#   3 档 领域顶刊            JCR Q1 且 JIF ≥ 8
+#   4 档 Q2 / Q1 中段        JCR Q2，或 JCR Q1 但 4 ≤ JIF < 8
+#   5 档 Q3 / 低分           JCR Q3，或 1 ≤ JIF < 4
+#   6 档 Q4 / 极低           JCR Q4，或 JIF < 1
+#   未知                     无 jif 也无 quartile → 用 tiering.scores.unknown
+# ============================================================================
+
+meta:
+  version: "1.0"
+  jcr_year: 2025                    # 影响因子所属年度
+  published_at: "2026-06"           # JCR 发布批次
+  updated_at: "2026-10-15"
+  maintainer: "人工复核 + AI 兜底"
+
+# ===== 分级规则 =====
+tiering:
+  # 各档在融合分中的取值（0..1）
+  scores:
+    1: 1.00
+    2: 0.85
+    3: 0.70
+    4: 0.50
+    5: 0.30
+    6: 0.10
+    unknown: 0.45
+  names:
+    1: "旗舰顶刊（Nature/Science/Cell）"
+    2: "三大刊子刊（Nature/Science/Cell 系列）"
+    3: "领域顶刊（JCR Q1 且 JIF≥8）"
+    4: "Q2 或 Q1 中段（JIF 4–8）"
+    5: "Q3 或低分（JIF 1–4）"
+    6: "Q4 或极低（JIF<1）"
+    unknown: "未知（无指标）"
+  # JIF 分档阈值（仅用于 3/4/5/6 档的判定）
+  jif_bands:
+    tier3_min: 8.0
+    tier4_min: 4.0
+    tier5_min: 1.0
+  # 1 档：白名单（归一化后完全相等才命中，避免 "Science Advances" 被当成 Science）
+  flagship:
+    - "Nature"
+    - "Science"
+    - "Cell"
+  # 2 档：子刊正则（对归一化小写刊名匹配）
+  subjournal_patterns:
+    - '^nature\s'
+    - '^nature$'
+    - '^npj\s'
+    - '^science\s+(advances|immunology|robotics|signaling|translational medicine)$'
+    - '^cell\s+\S'
+    - '^(molecular cell|developmental cell|cancer cell|current biology|immunity|neuron|joule|chem|matter|one earth|med|patterns|structure|cell reports medicine|iscience)$'
+    - '^trends in\s'
+  # 报告口径：当 jif 与 quartile 冲突时的取舍（quartile 优先，jif 只在 Q1 内部分档）
+  rule_note: "档位按 quartile 定档（Q1→3/4、Q2→4、Q3→5、Q4→6）；Q1 内再以 JIF≥8 区分 3 档与 4 档。仅有 JIF 时按 jif_bands 定档。"
+
+# ===== AI 兜底（表中没有的期刊）=====
+sources:
+  ai_fallback:
+    enabled: true                 # 是否允许调用 LLM 补全（--no-llm 可关闭）
+    model: "deepseek-chat"
+    temperature: 0.0
+    max_tokens: 400
+    require_evidence: true        # 强制模型给出依据，否则视为不可信并留空
+    mark_source: "ai"             # 写入 journals.source 的标记
+
+# ===== 期刊指标（人工复核表）=====
+# 字段：name 规范全名 / aliases 别名与缩写 / issn 印刷+电子 ISSN /
+#       jif 2025 影响因子 / quartile JCR 分区 / category 学科 /
+#       tier 仅用于覆盖规则（一般留空，由代码算）/ source / evidence
+journals:
+  # ---------- 1 档：旗舰顶刊 ----------
+  - name: "Nature"
+    aliases: ["Nature"]
+    issn: ["0028-0836", "1476-4687"]
+    jif: 56.1
+    quartile: "Q1"
+    category: "Multidisciplinary Sciences"
+    source: "search"
+    evidence: "JCR 2026 发布：2025 JIF 56.1（上年 48.5），多学科 Q1"
+
+  - name: "Science"
+    aliases: ["Science"]
+    issn: ["0036-8075", "1095-9203"]
+    jif: 47.3
+    quartile: "Q1"
+    category: "Multidisciplinary Sciences"
+    source: "search"
+    evidence: "JCR 2026 发布：2025 JIF 47.3（上年 45.8）"
+
+  - name: "Cell"
+    aliases: ["Cell"]
+    issn: ["0092-8674", "1097-4172"]
+    jif: 45.1
+    quartile: "Q1"
+    category: "Biology"
+    source: "search"
+    evidence: "JCR 2026 发布：2025 JIF 45.1（上年 42.5）"
+
+  # ---------- 2 档：三大刊子刊（正则亦覆盖，此处保留指标留痕） ----------
+  - name: "Nature Ecology & Evolution"
+    aliases: ["Nat Ecol Evol", "Nature Ecology and Evolution"]
+    issn: ["2397-334X"]
+    jif: 17.1
+    quartile: "Q1"
+    category: "Ecology / Evolutionary Biology"
+    source: "search"
+    evidence: "生态学影响因子排名（2025 JIF）17.1；Nature 系列"
+
+  - name: "Nature Climate Change"
+    aliases: ["Nat Clim Chang"]
+    issn: ["1758-678X", "1758-6798"]
+    jif: 20.7
+    quartile: "Q1"
+    category: "Environmental Sciences"
+    source: "search"
+    evidence: "维普 2025 版影响因子 20.684（取 20.7）；Nature 系列"
+
+  - name: "Nature Communications"
+    aliases: ["Nat Commun"]
+    issn: ["2041-1723"]
+    jif: 18.1
+    quartile: "Q1"
+    category: "Multidisciplinary Sciences"
+    source: "search"
+    evidence: "Nature Portfolio 官方：2025 IF 18.1，5 年 IF 18.9，学科排名 8/140"
+
+  - name: "Nature Microbiology"
+    aliases: ["Nat Microbiol"]
+    issn: ["2058-5276"]
+    jif: 18.7
+    quartile: "Q1"
+    category: "Microbiology"
+    source: "search"
+    evidence: "JCR 微生物学榜单 18.7，Q1；Nature 系列"
+
+  - name: "Nature Reviews Microbiology"
+    aliases: ["Nat Rev Microbiol"]
+    issn: ["1740-1526", "1740-1534"]
+    jif: 103.3
+    quartile: "Q1"
+    category: "Microbiology"
+    source: "search"
+    evidence: "JCR 微生物学榜首 103.3，Q1；Nature 系列综述刊"
+
+  - name: "Science Advances"
+    aliases: ["Sci Adv"]
+    issn: ["2375-2548"]
+    jif: 13.9
+    quartile: "Q1"
+    category: "Multidisciplinary Sciences"
+    source: "search"
+    evidence: "2025 JIF 13.9（上年 12.5），多学科 Q1，排名 12/140"
+
+  - name: "Trends in Ecology & Evolution"
+    aliases: ["Trends Ecol Evol", "TREE", "Trends in Ecology and Evolution"]
+    issn: ["0169-5347", "1872-8383"]
+    jif: 17.9
+    quartile: "Q1"
+    category: "Ecology / Evolutionary Biology"
+    source: "search"
+    evidence: "JCR 2026 发布 2025 JIF 17.9（上年 17.3）；Cell Press「Trends」系列，ES 学科排名第 1"
+
+  # ---------- 3 档：领域顶刊（Q1 且 JIF ≥ 8） ----------
+  - name: "The ISME Journal"
+    aliases: ["ISME J", "ISME Journal", "ISME Journal of Microbial Ecology"]
+    issn: ["1751-7362", "1751-7370"]
+    jif: 10.7
+    quartile: "Q1"
+    category: "Microbiology / Ecology"
+    source: "search"
+    evidence: "维普 2025 版 10.724；另一来源为 2024 年 10.0，取 2025 值 10.7"
+
+  - name: "Microbiome"
+    aliases: ["Microbiome"]
+    issn: ["2049-2618"]
+    jif: 14.9
+    quartile: "Q1"
+    category: "Microbiology"
+    source: "search"
+    evidence: "Springer 官网：2025 JIF 14.9，5 年 18.5，微生物学排名 10/167"
+
+  - name: "Proceedings of the National Academy of Sciences"
+    aliases: ["PNAS", "Proc Natl Acad Sci USA", "Proc Natl Acad Sci", "P Natl Acad Sci USA",
+              "Proceedings of the National Academy of Sciences of the United States of America"]
+    issn: ["0027-8424", "1091-6490"]
+    jif: 9.5
+    quartile: "Q1"
+    category: "Multidisciplinary Sciences"
+    source: "search"
+    evidence: "PNAS 官网 / JCR 2026：2025 JIF 9.5，多学科排名 14/140"
+
+  - name: "Ecological Monographs"
+    aliases: ["Ecol Monogr"]
+    issn: ["0012-9615", "1557-7015"]
+    jif: 9.0
+    quartile: "Q1"
+    category: "Ecology"
+    source: "search"
+    evidence: "生态学影响因子排名（2025 JIF）9.0"
+
+  - name: "Soil Biology and Biochemistry"
+    aliases: ["Soil Biol Biochem", "Soil Biology & Biochemistry"]
+    issn: ["0038-0717", "1879-3428"]
+    jif: 12.2
+    quartile: "Q1"
+    category: "Soil Science"
+    source: "search"
+    evidence: "JCR 2025：12.2，土壤科学 Q1（另一个 2025 口径来源为 9.1，取期刊数据库 12.2 并留存差异）"
+
+  - name: "Soil & Tillage Research"
+    aliases: ["Soil Tillage Res", "Soil and Tillage Research"]
+    issn: ["0167-1987", "1879-3444"]
+    jif: 8.4
+    quartile: "Q1"
+    category: "Soil Science"
+    source: "search"
+    evidence: "JCR 2025：8.4，土壤科学 Q1（排名 3/36~4/48）"
+
+  - name: "Water Research"
+    aliases: ["Water Res"]
+    issn: ["0043-1354", "1879-2448"]
+    jif: 12.8
+    quartile: "Q1"
+    category: "Environmental Sciences / Water Resources"
+    source: "search"
+    evidence: "JCR 2025：12.8（维普 13.107），环境科学与生态学 1 区 Q1"
+
+  - name: "Global Change Biology"
+    aliases: ["Glob Change Biol", "GCB"]
+    issn: ["1354-1013", "1365-2486"]
+    jif: 12.5
+    quartile: "Q1"
+    category: "Environmental Sciences / Ecology"
+    source: "search"
+    evidence: "生态学影响因子排名（2025 JIF）12.5"
+
+  # ---------- 4 档：Q2 或 Q1 中段 ----------
+  - name: "Ecology Letters"
+    aliases: ["Ecol Lett"]
+    issn: ["1461-023X", "1461-0248"]
+    jif: 7.7
+    quartile: "Q1"
+    category: "Ecology"
+    source: "search"
+    evidence: "JCR 2025：7.7，生态学 Q1（Q1 但 JIF<8 → 4 档）"
+
+  - name: "Ecology"
+    aliases: ["Ecology"]
+    issn: ["0012-9658", "1939-9170"]
+    jif: 4.1
+    quartile: "Q1"
+    category: "Ecology"
+    source: "search"
+    evidence: "科研通 JCR 2026：4.1（上年 4.3），生态学 Q1（44/205）"
+
+  - name: "Ecography"
+    aliases: ["Ecography"]
+    issn: ["0906-7590", "1600-0587"]
+    jif: 5.3
+    quartile: "Q1"
+    category: "Ecology / Biodiversity Conservation"
+    source: "search"
+    evidence: "科研通 JCR 2026：5.3，生态学 Q1（28/205）"
+
+  - name: "Oikos"
+    aliases: ["Oikos"]
+    issn: ["0030-1299", "1600-0706"]
+    jif: 3.0
+    quartile: "Q2"
+    category: "Ecology"
+    source: "search"
+    evidence: "JCR 2025：3.0，生态学 Q2"
+
+  - name: "Journal of Ecology"
+    aliases: ["J Ecol"]
+    issn: ["0022-0477", "1365-2745"]
+    jif: 6.3
+    quartile: "Q1"
+    category: "Ecology / Plant Sciences"
+    source: "search"
+    evidence: "生态学影响因子排名（2025 JIF）6.3"
+
+  - name: "Functional Ecology"
+    aliases: ["Funct Ecol"]
+    issn: ["0269-8463", "1365-2435"]
+    jif: 5.5
+    quartile: "Q1"
+    category: "Ecology"
+    source: "search"
+    evidence: "生态学影响因子排名（2025 JIF）5.5；PDF 页脚印有 eISSN 13652435"
+
+  - name: "The American Naturalist"
+    aliases: ["Am Nat", "American Naturalist"]
+    issn: ["0003-0147", "1537-5323"]
+    jif: 2.7
+    quartile: "Q2"
+    category: "Ecology / Evolutionary Biology"
+    source: "search"
+    evidence: "科研通 JCR 2026：2.7，生态学 Q2（86/205）、进化生物学 Q2"
+
+  - name: "Environmental Microbiology"
+    aliases: ["Environ Microbiol"]
+    issn: ["1462-2912", "1462-2920"]
+    jif: 4.0
+    quartile: "Q2"
+    category: "Microbiology"
+    source: "search"
+    evidence: "JCR 微生物学榜单 4.0，Q2（Wiley 期刊）"
+
+  - name: "Applied and Environmental Microbiology"
+    aliases: ["Appl Environ Microbiol", "AEM"]
+    issn: ["0099-2240", "1098-5336"]
+    jif: 3.7
+    quartile: "Q2"
+    category: "Microbiology / Biotechnology"
+    source: "search"
+    evidence: "JCR 微生物学榜单 3.7，Q2（ASM 期刊）"
+
+  - name: "Microbial Ecology"
+    aliases: ["Microb Ecol"]
+    issn: ["0095-3628", "1432-184X"]
+    jif: 4.3
+    quartile: "Q2"
+    category: "Microbiology / Ecology"
+    source: "search"
+    evidence: "JCR 2025：4.3；分区横跨 Q1/Q2（生态学、海洋与淡水生物学、微生物学），取 Q2"
+
+  - name: "AMB Express"
+    aliases: ["AMB Expr", "AMB Express"]
+    issn: ["2191-0855"]
+    jif: 3.8
+    quartile: "Q2"
+    category: "Applied Microbiology and Biotechnology"
+    source: "search"
+    evidence: "2024 JIF 3.8（2025 尚未更新），Scopus 两年引用率 3.91；Q2"
+
+  - name: "Applied Microbiology and Biotechnology"
+    aliases: ["Appl Microbiol Biotechnol", "Appl Microbiol Biot"]
+    issn: ["0175-7598", "1432-0614"]
+    jif: 4.7
+    quartile: "Q2"
+    category: "Biotechnology & Applied Microbiology"
+    source: "search"
+    evidence: "X-MOL JCR 2025：4.7（中科院 3 区，故取 JCR Q2）"
+
+  - name: "Applied Soil Ecology"
+    aliases: ["Appl Soil Ecol"]
+    issn: ["0929-1393", "1873-0273"]
+    jif: 5.6
+    quartile: "Q1"
+    category: "Soil Science"
+    source: "search"
+    evidence: "JCR 2025：5.6，Q1（中科院分区未收录，h-index 183）"
+
+  - name: "Plant and Soil"
+    aliases: ["Plant Soil"]
+    issn: ["0032-079X", "1573-5036"]
+    jif: 4.8
+    quartile: "Q1"
+    category: "Soil Science / Plant Sciences"
+    source: "search"
+    evidence: "Springer 官网：2025 JIF 4.8，5 年 5.3；JCR Q1（另一来源 4.1，留存差异）"
+
+  - name: "Global Biogeochemical Cycles"
+    aliases: ["Global Biogeochem Cycles", "Glob Biogeochem Cy"]
+    issn: ["0886-6236", "1944-9224"]
+    jif: 6.9
+    quartile: "Q1"
+    category: "Environmental Sciences / Geosciences"
+    source: "search"
+    evidence: "AGU 官网：2025 JIF 6.9；JCR 环境科学/地球科学/气象学均 Q1"
+
+  - name: "PLOS ONE"
+    aliases: ["PLoS One", "PLoS ONE"]
+    issn: ["1932-6203"]
+    jif: 2.8
+    quartile: "Q2"
+    category: "Multidisciplinary Sciences"
+    source: "search"
+    evidence: "2025 IF 2.8，JCR 2 区，中科院 3 区"
+
+  - name: "PLOS Biology"
+    aliases: ["PLoS Biol", "PLoS Biology"]
+    issn: ["1544-9173", "1545-7885"]
+    jif: 6.9
+    quartile: "Q1"
+    category: "Biology"
+    source: "search"
+    evidence: "科研通 JCR 2026：6.9，生物学 Q1（6/106）"
+
+  - name: "Scientific Reports"
+    aliases: ["Sci Rep"]
+    issn: ["2045-2322"]
+    jif: 4.9
+    quartile: "Q1"
+    category: "Multidisciplinary Sciences"
+    source: "search"
+    evidence: "Nature Portfolio 官网：2025 JIF 4.9，多学科 Q1"
+
+  - name: "BioEssays"
+    aliases: ["Bioessays", "BioEssays"]
+    issn: ["0265-9247", "1521-1878"]
+    jif: 3.3
+    quartile: "Q1"
+    category: "Biology / Biochemistry & Molecular Biology"
+    source: "search"
+    evidence: "Wiley 官方 2025 JIF 3.3；生物学类 Q1（26/106）但生化与分子生物学 Q3，按最优分区 Q1"
+
+  - name: "Biology Letters"
+    aliases: ["Biol Lett"]
+    issn: ["1744-9561", "1744-957X"]
+    jif: 2.7
+    quartile: "Q2"
+    category: "Biology"
+    source: "search"
+    evidence: "JCR 2025：2.7，生物学 Q2"
+
+  - name: "Philosophical Transactions of the Royal Society B"
+    aliases: ["Philos Trans R Soc B", "Phil Trans R Soc B",
+              "Philosophical Transactions of the Royal Society B-Biological Sciences"]
+    issn: ["0962-8436", "1471-2970"]
+    jif: 5.3
+    quartile: "Q1"
+    category: "Biology"
+    source: "search"
+    evidence: "JCR 2026 发布 2025 JIF 5.3，生物学 Q1（中科院 1 区 TOP）"
+
+  # ---------- 6 档：Q4 / 极低 ----------
+  - name: "Aquatic Microbial Ecology"
+    aliases: ["Aquat Microb Ecol"]
+    issn: ["0948-3055", "1616-1564"]
+    jif: 1.1
+    quartile: "Q4"
+    category: "Ecology / Marine & Freshwater Biology / Microbiology"
+    source: "search"
+    evidence: "科研通 JCR 2026：1.1，生态学 Q4（162/205）、微生物学 Q4"
+
+  # ---------- 未检索到 → 留空交给 AI 兜底（不臆造指标） ----------
+  - name: "Inland Waters"
+    aliases: ["Inland Waters"]
+    issn: ["2044-2041", "2044-205X"]
+    jif:
+    quartile:
+    category: "Limnology"
+    source: "todo"
+    evidence: "本次检索未获得 2025 JIF / JCR 分区，留空由 AI 兜底并在报告中标注"
+
+  - name: "Journal of Experimental Marine Biology and Ecology"
+    aliases: ["J Exp Mar Biol Ecol"]
+    issn: ["0022-0981", "1879-1603"]
+    jif:
+    quartile:
+    category: "Marine Biology / Ecology"
+    source: "todo"
+    evidence: "本次检索未获得 2025 JIF / JCR 分区，留空由 AI 兜底并在报告中标注"
+
+  - name: "Molecular Ecology"
+    aliases: ["Mol Ecol"]
+    issn: ["0962-1083", "1365-294X"]
+    jif:
+    quartile:
+    category: "Ecology / Evolutionary Biology"
+    source: "todo"
+    evidence: "本次检索未覆盖，留空由 AI 兜底并在报告中标注"
+
+  - name: "Journal of Animal Ecology"
+    aliases: ["J Anim Ecol"]
+    issn: ["0021-8790", "1365-2656"]
+    jif:
+    quartile:
+    category: "Ecology"
+    source: "todo"
+    evidence: "从 PDF 页眉/页脚识别到（库中该 PDF 实为 J Anim Ecol 2013 论文，文件名却标为 Biology Letters 2019，见报告）"
+
+  - name: "Environmental Modelling & Software"
+    aliases: ["Environ Model Softw", "Environmental Modelling and Software"]
+    issn: ["1364-8152", "1873-6726"]
+    jif:
+    quartile:
+    category: "Environmental Sciences / Computer Science"
+    source: "todo"
+    evidence: "从 PDF 页眉识别到（库中该 PDF 实为 Environ Model Softw 论文，文件名却标为 Environmental Microbiology 2017）"

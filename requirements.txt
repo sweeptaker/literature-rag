@@ -1,0 +1,17 @@
+# ragmini 最小可迁移 RAG —— Python 依赖清单
+#
+# 安装（由 install.py 自动完成，也可手工执行）：
+#     python -m pip install -r requirements.txt
+#
+# 说明：torch / transformers 体积较大（合计约 200 MB~1 GB，视平台而定），
+#       首次安装需要几分钟；sentence-transformers 会自动带上 torch 与 transformers，
+#       此处显式列出以便锁定最低版本。
+
+numpy>=1.24
+pyyaml>=6.0
+requests>=2.31
+tqdm>=4.66
+pymupdf>=1.23          # PDF 解析（import pymupdf / 旧版 import fitz）
+torch>=2.0
+transformers>=4.38
+sentence-transformers>=2.7
