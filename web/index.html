@@ -172,6 +172,9 @@ function jn(c){
   return tag ? `${n}（${tag}）` : n;
 }
 
+// 论文标题置首（用户要求优先返回标题信息）
+function ttl(c){ return (c.title||"").trim(); }
+
 function esc(t){ return (t??"").replace(/[&<>]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c])); }
 function bar(v){ return `<div class="bar"><i style="width:${Math.max(0,Math.min(1,v))*100}%"></i></div>`; }
 function netErrBox(e, url){
@@ -252,21 +255,23 @@ function renderRecall(items, corpus){
     <div class="stat"><div class="k">全库切片</div><div class="v">${corpus}</div></div>
     <div class="stat" style="grid-column:span 2"><div class="k">说明</div>
       <div class="v" style="font-size:13px;font-weight:400">图/表题注等噪声已在切片阶段剔除</div></div>`;
-  $("#recall-list").innerHTML = items.map((c,i)=>
-    `<div>${String(i+1).padStart(2,"0")}. sem=${(c.semantic??0).toFixed(3)} ·
-      ${esc(jn(c))}(${c.year||"?"}) · ${esc(c.label||"")} · p${c.page_start}-${c.page_end}</div>`
-  ).join("");
+  $("#recall-list").innerHTML = items.map((c,i)=>{
+    const tt = ttl(c), tshow = tt ? (tt.length>60?tt.slice(0,60)+"…":tt) : "";
+    return `<div>${String(i+1).padStart(2,"0")}. ${tshow?`<b>${esc(tshow)}</b> — `:""}sem=${(c.semantic??0).toFixed(3)} ·
+      ${esc(jn(c))}(${c.year||"?"}) · ${esc(c.label||"")} · p${c.page_start}-${c.page_end}</div>`;
+  }).join("");
 }
 function renderEvidence(items){
   $("#c4").hidden=false;
   $("#evlist").innerHTML = items.map(c=>{
     const cls = CLS_TAG[c.evidence_class]||"t-none";
     const rr = (c.rerank_s!=null) ? `重排 ${c.rerank_s.toFixed(3)} · ` : "";
+    const tt = ttl(c);
     return `<details class="ev" id="ev-${c.rank}"><summary>
       <span class="rk">[${c.rank}]</span>
       <span class="tag ${cls}">${CLS_CN[c.evidence_class]||c.evidence_class}</span>
       <span class="conf">置信 ${c.confidence}</span>
-      <span>${esc(jn(c))} · ${c.year||"?"} · ${esc(c.label||"")} · p${c.page_start}-${c.page_end}</span>
+      <span>${tt ? `<b>${esc(tt)}</b> — ` : ""}${esc(jn(c))} · ${c.year||"?"} · ${esc(c.label||"")} · p${c.page_start}-${c.page_end}</span>
       <span class="score">final ${(c.final||0).toFixed(4)} · fusion ${(c.fusion||0).toFixed(4)} · ${rr}sem ${(c.semantic||0).toFixed(3)}</span>
       </summary>
       <div class="srcline">DOI ${esc(c.doi||"—")} · chunk ${esc((c.chunk_uid||"").slice(0,12))}</div>

@@ -197,6 +197,7 @@ def extract_blocks(path: str, max_pages: int = 0,
     sizes: list[tuple[float, int]] = []      # (字号, 字符数) 用于估计正文字号
     meta_title = ""
     meta_pdf = {}
+    title_lines: list[tuple[float, float, str]] = []   # 首页 (y0, size, text)，供标题推断
 
     try:
         meta_title = (doc.metadata or {}).get("title") or ""
@@ -214,9 +215,13 @@ def extract_blocks(path: str, max_pages: int = 0,
     for pno in range(limit):
         page = doc.load_page(pno)
         data = page.get_text("dict")
+        H = float(page.rect.height)
         for blk in data.get("blocks", []):
             if blk.get("type") != 0:            # 非文本块（图片）跳过
                 continue
+            by0 = float(blk.get("bbox", [0, 0, 0, 0])[1])
+            # 首页正文带内的行登记为标题候选（0.035H 以上是社标/页眉，0.92H 以下是页脚）
+            is_p1 = (pno == 0) and (H * 0.035 <= by0 <= H * 0.92)
             lines, max_size = [], 0.0
             for ln in blk.get("lines", []):
                 spans = ln.get("spans", [])
@@ -228,6 +233,9 @@ def extract_blocks(path: str, max_pages: int = 0,
                 line_size = max(float(sp.get("size", 0)) for sp in spans)
                 max_size = max(max_size, line_size)
                 lines.append((line_txt, line_size))
+                if is_p1:
+                    ly0 = float(ln.get("bbox", blk.get("bbox", [0, by0, 0, 0]))[1])
+                    title_lines.append((ly0, line_size, line_txt))
             if not lines:
                 continue
             text = normalize_ws("\n".join(t for t, _ in lines))
@@ -249,7 +257,19 @@ def extract_blocks(path: str, max_pages: int = 0,
             k = round(sz * 2) / 2
             bucket[k] = bucket.get(k, 0) + n
         body_size = max(bucket.items(), key=lambda kv: kv[1])[0]
+
+    # 论文标题：首页版式 + 元数据交叉验证（与主项目 pdf_meta.extract_title 同一核心）；
+    # 依赖「规范刊名」过滤刊名横幅，故在 extract_pdf_meta 之后计算
+    title, title_src = "", "none"
+    try:
+        title, title_src = PM.pick_title(
+            title_lines, meta_title,
+            journal_hint=(meta_pdf or {}).get("journal") or "")
+    except Exception as e:  # noqa: BLE001
+        info_err = (info_err + f"; title={type(e).__name__}: {e}").strip("; ")
+
     return blocks, {"n_pages": limit, "body_size": body_size, "title_meta": meta_title,
+                    "title": title, "title_src": title_src,
                     "meta_pdf": meta_pdf, "meta_pdf_err": info_err}
 
 
@@ -494,7 +514,7 @@ def _year_from_filename(stem: str):
 
 
 def guess_metadata(path: str, blocks: list[dict], title_meta: str,
-                   meta_pdf: dict | None = None) -> dict:
+                   meta_pdf: dict | None = None, title_layout: str = "") -> dict:
     """推断期刊/年份/DOI/ISSN/标题。
 
     **PDF 优先，文件名兜底**（用户明确要求）：源文件名有 46 字符上限，期刊名与 DOI
@@ -506,6 +526,7 @@ def guess_metadata(path: str, blocks: list[dict], title_meta: str,
         doi     : PDF 正文/元数据 → 文件名
         year    : PDF 引文行/版权/出版行 → 文件名 → PDF 创建年份（最弱，可能是下载年）
         issn    : 仅来自 PDF（供 journals.py 做刊名规范化）
+        title   : 首页版式+元数据交叉验证（extract_blocks 内计算）→ PDF 元数据 → 最大字号块
     返回的 `_src` 字段逐项记录来源，便于审计。
     """
     import os
@@ -544,7 +565,7 @@ def guess_metadata(path: str, blocks: list[dict], title_meta: str,
         year, year_src = (int(y_pdf) if y_pdf else None), y_pdf_src
 
     # ---- 标题 ----
-    title = (title_meta or "").strip()
+    title = (title_layout or "").strip() or (title_meta or "").strip()
     if not title or len(title) < 12:
         cands = sorted(blocks[:8], key=lambda b: -b["size"])
         for b in cands:
@@ -599,7 +620,8 @@ def process_pdf(path: str, cfg: dict, max_pages: int = 0) -> dict | None:
         return None
 
     md5 = file_md5(path)
-    meta = guess_metadata(path, blocks_raw, info["title_meta"], info.get("meta_pdf"))
+    meta = guess_metadata(path, blocks_raw, info["title_meta"], info.get("meta_pdf"),
+                          title_layout=info.get("title", ""))
     doc_id = md5                                    # 以内容 md5 作为主键，跨库稳定
     doc = {
         "doc_id": doc_id,

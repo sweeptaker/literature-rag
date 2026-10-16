@@ -34,13 +34,15 @@ def build_prompt(question: str, candidates: list[dict], cfg: dict,
     blocks = []
     for c in candidates:
         pg = f"{c.get('page_start')}-{c.get('page_end')}" if c.get("page_start") else "?"
-        # 期刊名 + 档位 + 影响因子一起给出，便于模型区分证据的分量
+        # 标题置首（用户要求优先返回标题），期刊名 + 档位 + 影响因子帮助模型区分证据分量
+        ti = (c.get("title") or "").strip()
         jn = c.get("journal_name") or c.get("journal") or "未知"
         tier = f"{c['journal_tier']}档" if c.get("journal_tier") else ""
         jq = c.get("journal_quartile") or ""
         jif = f"IF {c['journal_jif']}" if c.get("journal_jif") else ""
         tag = "，".join(x for x in (tier, jq, jif) if x)
-        head = (f"【证据 {c['rank']}】期刊={jn}" + (f"（{tag}）" if tag else "")
+        head = (f"【证据 {c['rank']}】" + (f"标题={ti} | " if ti else "")
+                + f"期刊={jn}" + (f"（{tag}）" if tag else "")
                 + f" | 年份={c.get('year') or '未知'} | 章节={c.get('label')} | 页={pg}")
         txt = (c.get("text") or "").strip()
         if len(txt) > lim:

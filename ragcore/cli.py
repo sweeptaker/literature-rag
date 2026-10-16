@@ -321,7 +321,9 @@ def cmd_ask(cfg: dict) -> int:
         jq = c.get("journal_quartile") or ""
         jif = f"IF {c['journal_jif']}" if c.get("journal_jif") else ""
         jtag = " ".join(x for x in (tier, jq, jif) if x)
-        print(f"[{c['rank']}] {jn}({c['year'] or '?'})"
+        print(f"[{c['rank']}] " + (f"{(c.get('title') or '').strip()} — "
+              if (c.get('title') or '').strip() else "")
+              + f"{jn}({c['year'] or '?'})"
               + (f" [{jtag}]" if jtag else "") + f" · {c['label']} · {pg}"
               f" · {c['evidence_class']}/{c['confidence']}"
               f" · final={c['final']:.4f}{rr} · sem={c['semantic']:.3f}")
@@ -341,7 +343,7 @@ def _dump_csv(out: dict, path: str) -> None:
     rows = []
     for c in out["trace"]:
         rows.append({k: c.get(k) for k in (
-            "recall_rank", "rank", "chunk_uid", "doc_id", "filename", "journal", "year",
+            "recall_rank", "rank", "chunk_uid", "doc_id", "filename", "title", "journal", "year",
             "label", "page_start", "page_end", "semantic", "journal_s", "recency_s",
             "claim_s", "section_s", "fusion", "rerank_s", "final",
             "journal_canon", "journal_name", "journal_tier", "journal_tier_name",

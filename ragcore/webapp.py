@@ -41,7 +41,7 @@ def preheat(cfg: dict) -> None:
 
 
 def cand_json(c: dict, with_text: bool = True) -> dict:
-    keep = ("rank", "recall_rank", "chunk_uid", "doc_id", "filename", "journal", "year",
+    keep = ("rank", "recall_rank", "chunk_uid", "doc_id", "filename", "title", "journal", "year",
             "doi", "label", "page_start", "page_end", "semantic", "journal_s", "recency_s",
             "claim_s", "section_s", "fusion", "rerank_s", "final",
             "journal_canon", "journal_name", "journal_tier", "journal_tier_name",

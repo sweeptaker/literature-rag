@@ -38,6 +38,8 @@ issn
 对外接口：
     load_journal_index(path)             读取刊名索引 TSV（纯文本，避免依赖 pyyaml）
     extract_pdf_meta(doc, prof, index)   提取并返回各字段 + 来源标记 + 候选留痕
+    extract_title(doc, prof, journal)    论文标题（首页版式 + 元数据交叉验证）
+                                         与 pick_title(lines, meta, journal) 纯函数核心
 
 所有失败路径都返回空值，绝不臆造。
 """
@@ -144,7 +146,7 @@ TAIL_TRIM_RES = [
 def load_journal_index(path):
     """读取刊名索引 TSV：`规范名<TAB>别名(以 | 分隔)<TAB>ISSN(以 | 分隔)`。
 
-    由 ragcore/journals.py 依据 配置/journal_metrics.yaml 生成。
+    由 ragcore/journals.py 依据 journal_metrics.yaml 生成。
     作用：把 PDF 里的缩写刊名（Appl Microbiol Biotechnol）映射为规范全名，
     并把 ISSN 变成可用的锚点。文件缺失时返回空列表，抽取逻辑退化为纯启发式。
     """
@@ -541,7 +543,7 @@ def extract_pdf_meta(doc, prof=None, index=None, hf_top=0.12, hf_bottom=0.88):
             # 未命中索引表时只接受「结构化引文行」给出的裸刊名。
             # 实测：跨页重复的页眉里可能整行都是正文（"Letter RESEARCH"、
             # "ECOLOGY Transient phenomena in ecology"），当刊名用比留空更糟 ——
-            # 留空时 enrich_journals.py 会用文件名兜底，反而更准。
+            # 留空时 journals.py 会用文件名兜底，反而更准。
             return
         t, ok = _clean_journal(raw)
         if ok and len(re.sub(r"[^A-Za-z]", "", t)) >= 6 and _looks_like_journal(t):
@@ -552,7 +554,7 @@ def extract_pdf_meta(doc, prof=None, index=None, hf_top=0.12, hf_bottom=0.88):
     #    2 栏排版的页脚区会混入参考文献与正文，导致把被引文献的刊名
     #    （"Trends in Ecology & Evolution"、"Soil & Tillage Research"）当成本刊名，
     #    比"留空"更糟（会在检索时套用错误的期刊档位）。这类漏掉的论文由
-    #    enrich_journals.py 用文件名兜底，反而更准。
+    #    journals.py 用文件名兜底，反而更准。
     scan = list(cand_lines) + [(l, "pdf:head", False) for l in head_lines[:6]]
     for txt, src, repeated in scan:
         flat = re.sub(r"\s+", " ", txt)
@@ -614,3 +616,221 @@ def extract_pdf_meta(doc, prof=None, index=None, hf_top=0.12, hf_bottom=0.88):
         {"text": c[4], "src": c[5], "index": bool(c[0]),
          "quality": c[1], "rel": c[2], "keylen": c[3]} for c in cands[:8]]
     return result
+
+
+# ============================================================================
+# 论文标题抽取（首页版式 + 文档元数据交叉验证）
+# 供 pdf2chunks 使用；与主项目 代码/5_文本切片/pdf_meta.py 保持同一实现。
+# ============================================================================
+_TITLE_JUNK_RE = re.compile(
+    r"^(doi[:\s]|https?://|www\.|©|copyright|issn|isbn|vol\.|volume|issue|"
+    r"received|accepted|available online|research article|review article|"
+    r"original article|short communication|editorial|letter to|corrigendum|"
+    r"erratum|special issue|front matter|back matter|keywords?|jstor|"
+    r"view project|supplementary|lawrence berkeley)\b|©", re.I)
+_TITLE_META_JUNK_RE = re.compile(
+    r"\.(docx?|pdf|indd|qxd|pages)\b|Microsoft Word|InDesign|Layout|"
+    r"Untitled|unknown", re.I)
+# 版权 / 许可 / 出版商样板（整簇出现即拒绝）
+_TITLE_BOILER_RE = re.compile(
+    r"creative commons|open access article|all rights reserved|jstor|"
+    r"not-for-profit|view project|©|copyright|licensed under|terms of use|"
+    r"downloaded from|by the ecological society|wiley & sons|springer nature|"
+    r"pnas is a|proceedings of the national academy|university of chicago|"
+    r"university press|see discussions, stats", re.I)
+# 作者行：连续两个及以上「单字母缩写.」（如 "S. J. McNAUGHTON"）或含邮箱
+_TITLE_AUTHOR_RE = re.compile(r"(?:\b[A-Z]\.\s*){2,}|[\w.+-]+@[\w-]+\.\w+|et al\.")
+# 作者名单行（Elsevier 等）：一行里 ≥3 个「大写词(可带上标)+逗号」，
+# 如 "Bin Zhanga, Aizhen Liangb,⁎, Zhanbo Weic, Xueli Dinga,⁎"（标题行极少这样）
+_TITLE_AUTHORLIST_RE = re.compile(r"\b[A-Z][a-z]{1,14}[⁎*†‡\d]*,")
+# 栏头 / 文章类型词（Ecography 等期刊在标题上方印一个同字号的 "Research"）。
+# 只收「几乎不可能单独成为标题一行」的词，避免误伤折行标题里的短行。
+_TITLE_SECTION_RE = re.compile(
+    r"^(research|articles?|original (research )?articles?|reviews?|opinion|"
+    r"perspectives?|comments?|commentary|corrections?|in ?brief|brief ?report|"
+    r"letters?|news|policy|editorial|methods?|techniques?|statistics?|"
+    r"statistical reports?|data papers?|the papers?|feature|focused review)\.?$", re.I)
+
+# 连字（ligature）还原：PDF 文本层常把 fi/fl/ff 等编码成专用字符
+_TT_LIG_MAP = {"ﬁ": "fi", "ﬂ": "fl", "ﬀ": "ff", "ﬃ": "ffi", "ﬄ": "ffl"}
+_TT_LIG = re.compile("[" + "".join(_TT_LIG_MAP) + "]")
+
+
+def _tt_norm(s):
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
+def _tt_similar(a, b):
+    """规范化后的串相似度（difflib）。覆盖率比值不适合等长串（会误判），故用这里。"""
+    a, b = _tt_norm(a), _tt_norm(b)
+    if not a or not b:
+        return 0.0
+    if a in b or b in a:
+        return 1.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
+
+
+def _tt_line_ok(t, journal_hint):
+    """行级硬过滤：一定不是标题片段的行。长宽与词数校验放在合并之后（老期刊逐词分行）。"""
+    t = (t or "").replace("_", " ").strip()          # Supplementary_information_R4
+    if len(_tt_norm(t)) < 3 or len(t) > 300:
+        return False
+    if _TITLE_JUNK_RE.match(t):
+        return False
+    if re.fullmatch(r"[\d\s.,;:()\[\]–—-]+", t):        # 纯页码/日期行
+        return False
+    if _TITLE_AUTHOR_RE.search(t):                       # 作者行 / 邮箱
+        return False
+    if re.match(r"^\d{1,2}[A-Z]", t):                    # 单位行上标："1School of …"
+        return False
+    # 作者名单（姓名粘上标序号）："Cardinale1, J. Emmett Duffy2, Andrew Gonzalez3,"
+    if len(re.findall(r"\b[A-Z][a-z]{2,}\d,", t)) >= 2:
+        return False
+    if _TITLE_SECTION_RE.match(t):                       # 栏头 / 文章类型词
+        return False
+    if journal_hint and _tt_similar(t, journal_hint) >= 0.75:  # 刊名横幅 / 页眉
+        return False
+    return True
+
+
+def _tt_cluster_ok(t, journal_hint=""):
+    """合并后的候选串是否像一个论文标题。"""
+    t = (t or "").strip()
+    if len(t) < 12 or len(t) > 300:
+        return False
+    if _TITLE_JUNK_RE.match(t) or _TITLE_AUTHOR_RE.search(t):
+        return False
+    if _TITLE_BOILER_RE.search(t):                       # 版权/许可/出版商样板
+        return False
+    if re.fullmatch(r"[\d\s.,;:()\[\]–—-]+", t):
+        return False
+    if t[0].islower():                                   # 不像标题的句首
+        return False
+    # 作者上标序号连串："CADOTTE,1,2,4" / "Knight 1,4,6,12*"（高精度，标题几乎不会有）
+    if re.search(r"\d+(?:,\d+){2,}", t):
+        return False
+    # 姓名粘上标序号的作者名单："Anne Larigauderie12, Diane S. Srivastava13 & …"
+    if len(re.findall(r"\b[A-Z][a-z]{2,}\d{1,3}\b", t)) >= 2:
+        return False
+    # 单位行："Biology Department, Indiana University, …"
+    if re.search(r"\b(Department|Universit|Institute|Laborator)", t) and "," in t:
+        return False
+    if t.isupper() and len(t) <= 40:                     # 短全大写多为栏目名
+        return False
+    return True
+
+
+def _tt_strip_banner(t, journal_hint):
+    """剥掉并进来的刊名横幅前缀（如 "MICROBIOME Best practices…" / "ECOLOGY ent ways…"）。"""
+    toks = t.split()
+    jn = _tt_norm(journal_hint)
+    while toks:
+        w = toks[0].strip(".,;:")
+        if len(w) >= 4 and w.isupper() and _tt_norm(w) and _tt_norm(w) in jn:
+            toks.pop(0)
+        else:
+            break
+    return " ".join(toks)
+
+
+def pick_title(lines, meta_title="", journal_hint=""):
+    """由首页文本行推断论文标题。
+
+    lines: [(y0, size, text), ...]（首页各行，含字号与纵坐标）。
+    返回 (title, src)；src ∈ font / meta / meta+font / font+meta / none。
+
+    规则：
+      1. 行级硬过滤：页码行、DOI/版权/URL、作者行（缩写连缀/邮箱）、刊名横幅
+         （与 journal_hint 的 difflib 相似度 ≥0.75）；
+      2. 按字号从大到小逐组尝试「锚点行 → 向下合并字号相近（≥0.85×，折行标题
+         的各行字号几乎总与首行一致）且纵向相邻（≤40pt）的续行」，**合并后再做
+         合法性校验**（老期刊标题逐词分行，单行常不足 12 字，不能在行级做长度过滤）；
+      3. 真标题几乎都 ≥6 词，先取第一个满足的字号组；没有则退回第一个合法组
+         —— 这同时挡掉大字号的栏目横幅（如 Ecology 的 "Statistical Reports"）；
+      4. PDF 元数据标题交叉验证：为版式标题的完整超集时用元数据（补全截断），
+         两者高度一致时用版式结果，明显冲突时仍信版式（元数据常见 Word 残留）。
+    """
+    rows = []
+    for y, size, t in lines:
+        t = re.sub(r"\s+", " ", (t or "")).strip()
+        if t and _tt_line_ok(t, journal_hint):
+            rows.append((float(y or 0.0), float(size or 0.0), t))
+    rows.sort(key=lambda x: (x[0], -x[1]))              # y 升序 = 阅读顺序
+
+    layout, layout_src = "", ""
+    if rows:
+        fallback = ""
+        for asz in sorted({r[1] for r in rows}, reverse=True)[:6]:
+            ai = next(i for i, r in enumerate(rows) if abs(r[1] - asz) < 0.3)
+            ay = rows[ai][0]
+            parts = [rows[ai][2]]
+            for y, sz, t in rows[ai + 1:]:
+                if len(" ".join(parts)) >= 300:
+                    break
+                if y < ay - 2 or (y - ay) > 40:
+                    continue
+                # 折行标题的各行字号几乎总是与首行完全一致；0.85 的门槛把
+                # 紧随其后的作者行（略小一号，如 10.6/13.4=0.79）挡在外面
+                if sz >= asz * 0.85:
+                    # 一行里 ≥3 个「大写词+逗号」视为作者名单，就地截断
+                    if len(_TITLE_AUTHORLIST_RE.findall(t)) >= 3:
+                        break
+                    parts.append(t)
+                    ay = max(ay, y)                     # 锚点逐步下移，允许连续折行
+            cand = _TT_LIG.sub(lambda m: _TT_LIG_MAP[m.group(0)],
+                               " ".join(parts)).strip()
+            cand = _tt_strip_banner(cand, journal_hint)
+            if not _tt_cluster_ok(cand, journal_hint):
+                continue
+            if len(cand.split()) >= 6:                  # 真标题几乎都 ≥6 词
+                layout, layout_src = cand, "font"
+                break
+            fallback = fallback or cand                 # 记住第一个合法但偏短的
+        if not layout and fallback:
+            layout, layout_src = fallback, "font"
+
+    meta = re.sub(r"\s+", " ", (meta_title or "")).strip()
+    # 下划线几乎只出现在文件名式的元数据标题里（如 "Supplementary_information_R4"）
+    if _TITLE_META_JUNK_RE.search(meta) or len(meta) < 20 or "_" in meta:
+        meta = ""
+
+    if meta and not layout:
+        return meta, "meta"
+    if meta and layout:
+        if _tt_norm(layout) and _tt_norm(layout) in _tt_norm(meta):
+            return meta, "meta+font"                   # 元数据是完整版（版式标题被截断）
+        if _tt_similar(layout, meta) >= 0.75:
+            return layout, "font+meta"                 # 两源一致
+        return layout, "font"                          # 冲突：信版式不信元数据
+    return layout, (layout_src if layout else "none")
+
+
+def extract_title(doc, prof=None, journal_hint=""):
+    """打开中的 PDF → (标题, 来源)。只读首页，供入库与回填共用。
+
+    顶部只裁掉 0.035H 以上的边缘（期刊社标/页眉页码），**不裁到 0.09H**——
+    实测 Ecology Letters 等期刊的标题起始于 y≈0.08H，裁太狠会把真标题排除、
+    锚到摘要首句。刊名横幅交给 journal_hint 与内容过滤器处理。
+    """
+    page = doc[0]
+    H = float(page.rect.height)
+    top, bot = H * 0.035, H * 0.92
+    lines = []
+    for b in page.get_text("dict")["blocks"]:
+        if b.get("type") != 0:
+            continue
+        y0 = float(b["bbox"][1])
+        if y0 < top or y0 > bot:                        # 页眉/页脚横幅区
+            continue
+        for ln in b.get("lines", []):
+            spans = ln.get("spans") or []
+            if not spans:
+                continue
+            t = "".join(s.get("text", "") for s in spans)
+            size = max((float(s.get("size", 0)) for s in spans), default=0.0)
+            lines.append((float(ln.get("bbox", [0, y0, 0, 0])[1]), size, t))
+    try:
+        meta_title = (doc.metadata or {}).get("title") or ""
+    except Exception:                                   # noqa: BLE001
+        meta_title = ""
+    return pick_title(lines, meta_title, journal_hint)
