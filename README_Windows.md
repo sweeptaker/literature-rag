@@ -67,26 +67,11 @@ python run.py serve --port 8765
 
 > 若包内已存在 `.venv`，`run.py` 会**自动切换**到该虚拟环境运行，无需手工 `activate`。
 
-### 期刊分级（1–6 档）
+### 期刊指标富集（可选了解）
 
-`ingest` 结束时会对语料中出现过的期刊逐条求 **JCR 分区**与**影响因子（JIF）**，并折算成 1–6 档：
-
-| 档位 | 判定条件 | 融合权重得分 |
-|---|---|---|
-| 1 档 | Nature / Science / Cell 正刊 | 1.00 |
-| 2 档 | Nature 子刊、Science Advances、Cell 子刊（含 Trends、npj 系列） | 0.85 |
-| 3 档 | JCR Q1 且 JIF ≥ 8（领域内顶刊） | 0.70 |
-| 4 档 | JCR Q2，或 Q1 中段（JIF 4–8） | 0.50 |
-| 5 档 | JCR Q3，或 JIF 1–4 | 0.30 |
-| 6 档 | JCR Q4，或 JIF < 1 | 0.10 |
-| 未知 | 无可靠数据源（不猜） | 0.45 |
-
-- **优先使用人工复核的检索结果**（`journal_metrics.yaml`，45 条），表内缺失的才走 AI 兜底；
-  AI 必须给出可核验依据（`require_evidence`），拿不到依据就保持「未知档」，绝不硬填。
-- 档位由代码**确定性计算**，AI 只提供 `JIF` / `quartile` 两个原始数字，避免幻觉。
-- 被引次数（citation）因子**已彻底删除**，五因子权重已归一化到 Σ = 1.0000。
-- 没有配置 `DEEPSEEK_API_KEY` 时自动跳过 AI 兜底，人工表部分照常生效；
-  检查结果：`python run.py stats`。
+`ingest` 成功后会自动对语料期刊求 JCR 分区与影响因子，并折算成 1–6 档写入 `journals` 表，
+检索时按档位打分；`python run.py stats` 可查看各刊档位。分档规则与数据来源见
+`journal_metrics.yaml` 的注释；手工重跑：`python run.py enrich`（`--no-llm` 只用人工复核表）。
 
 ---
 

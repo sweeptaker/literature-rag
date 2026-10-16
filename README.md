@@ -151,7 +151,7 @@ ragmini/
 |---|---|
 | `python run.py doctor` | 环境自检（依赖、模型、数据库、API Key） |
 | `python run.py init` | 生成默认 `config.yaml` |
-| `python run.py ingest <路径...>` | PDF 切片入库（**入库后自动富集期刊指标**，可用 `--no-enrich` 跳过）。`--force` 重建；`--dry-run` 只导出复核表；`--limit N` 只处理前 N 篇 |
+| `python run.py ingest <路径...>` | PDF 切片入库（入库后自动富集期刊指标，可用 `--no-enrich` 跳过）。`--force` 重建；`--dry-run` 只导出复核表；`--limit N` 只处理前 N 篇 |
 | `python run.py enrich` | 单独重跑期刊富集：JCR 分区 / 影响因子 → 1–6 档。`--no-llm` 只用人工表（离线/省 API） |
 | `python run.py embed` | 生成向量。`--force` 全部重算；`--batch N`；`--device cpu/mps/cuda` |
 | `python run.py ask "问题"` | 检索 + 生成。`--no-rerank`、`--no-dedup`、`--no-norm`、`--topk N`、`--intent L`、`--n-recall N`、`--json`、`--dump out.csv` |
@@ -178,11 +178,11 @@ ragmini/
  └─ ⑧ 生成         编号证据块 → DeepSeek → 带 [n] 引用、证据不足须声明为推测
 ```
 
-- **被引次数（citation）因子已删除**：它原是 0.03 的占位（无数据源、恒为 0），去掉后把剩余
-  0.97 归一化回 1.0（0.70/0.97=0.722、0.10/0.97=0.103、0.08/0.97=0.082、0.07/0.97=0.072、
-  0.02/0.97=0.021），各因子的相对比例不变。
 - **期刊因子按「档位」打分**（`journal` 权重 0.103）：档位取自 `journals` 表，
   1 档 1.00 / 2 档 0.85 / 3 档 0.70 / 4 档 0.50 / 5 档 0.30 / 6 档 0.10 / 未知 0.45。
+- **元数据优先从 PDF 抽取**：入库时按「ISSN 锚点 > 结构化引文行 > 页眉页脚 > 文件名」的
+  可靠度顺序提取期刊名 / 年份 / DOI，避免源文件名 46 字符上限造成的截断
+  （110 篇实测规范刊名全部正确）。缩写刊名经 `journal_index.tsv` 映射为规范全名。
 - 语料切分：target 350 token / overlap 0.15 / min 120 / max 700，**绝不跨章节拼接**；
   只保留 8 类目标标签（Abstract / Introduction / Methods / Results / Results and Discussion /
   Discussion / Conclusion / Front Matter），参考文献、致谢、关键词等整段丢弃。
@@ -192,53 +192,6 @@ ragmini/
   `RAGMINI_HF_ENDPOINT` / `RAGMINI_NORELAUNCH` / `RAGMINI_JOURNAL_METRICS` / `RAGMINI_JOURNAL_INDEX`。
   其中 `journal_metrics.yaml` 与 `journal_index.tsv` 按**包根**解析（不随 `RAGMINI_ROOT` 漂移），
   否则用临时根做测试时导出的索引会落到包外。
-
----
-
-## 六之二、期刊分级与指标富集
-
-**目标**：每次生成数据库之后，对期刊求 JCR 分区与影响因子，并按 6 个档位打分。
-
-分档规则（用户口径，**由代码确定性计算**，AI 只负责提供 JIF / 分区）：
-
-| 档位 | 含义 | 判定 |
-|---|---|---|
-| 1 | 旗舰顶刊 | Nature / Science / Cell（白名单精确匹配） |
-| 2 | 三大刊子刊 | Nature 系列、Science 系列（正刊外）、Cell Press 系列（含 Trends）、npj 系列 |
-| 3 | 领域顶刊 | JCR Q1 且 JIF ≥ 8 |
-| 4 | Q2 或 Q1 中段 | JCR Q2，或 JCR Q1 但 4 ≤ JIF < 8 |
-| 5 | Q3 或低分 | JCR Q3，或 1 ≤ JIF < 4 |
-| 6 | Q4 或极低 | JCR Q4，或 JIF < 1 |
-| 未知 | 无指标 | 既无 JIF 也无分区 → 0.45 兜底分 |
-
-数据来源**优先用检索到的结果**：`journal_metrics.yaml` 是人工复核的检索结果表
-（JCR 2025 影响因子 + 分区，每条都带 `evidence` 依据）；表里没有的期刊才调用 DeepSeek
-兜底，并在 `journals.source` 标为 `ai`（要求给出依据，否则留空不臆造）。
-
-产物：
-
-- `journals` 表（档位 / JIF / 分区 / 学科 / 来源 / 依据 / 文献数）
-- `documents.journal_canon`（规范刊名）与 `documents.issn`
-- `journal_index.tsv`（刊名→别名/缩写/ISSN 索引，供 `ragcore/pdf_meta.py` 使用）
-- `中间文件/journal_metrics_report.csv`（分级结果全表）、`journal_todo.csv`（仍缺指标的期刊）
-
-**PDF 优先的元数据抽取**：入库时从页眉/页脚/引文行/ISSN 提取期刊名、年份、DOI，
-文件名只作兜底（源文件名有 46 字符上限，会把 `Applied Microbiology and Biotechnology`
-截成 `Applied Microbi`、把 DOI 截成 `10.1016/j`）。抽取依据按可靠性排序：
-
-1. **ISSN 锚点** —— 页脚印的 ISSN（如 Functional Ecology 的 `13652435`）对上刊名索引即定案；
-2. **结构化引文行** —— 各出版商格式都归纳成 6 类正则：
-   `Ecology, 102(9), 2021, e03441`、`Appl Microbiol Biotechnol (2017) 101:4863–4870`、
-   `Functional Ecology. 2022;36:1442–1456.`、`BioEssays 23:657`、
-   `Journal of Animal Ecology 2013, 82, 1042–1051`；
-3. **跨页重复的页眉/页脚** —— 刊名在页眉里是逐页复制的，属强证据；
-4. 缩写刊名（`Glob Change Biol` / `AMB Expr` / `Soil Biol Biochem`）通过 `journal_index.tsv`
-   的别名表映射为规范全名；单次出现的页边距行**一律不猜**（2 栏排版的页脚会混入参考文献，
-   猜错的代价比留空更高 —— 留空时按文件名兜底反而更准）。
-
-实测（110 篇真实语料）：PDF 直接抽出规范刊名 96 篇，其余 14 篇由文件名 + 别名表补齐，
-**110/110 全部得到正确的规范刊名**（改动前全部是文件名截断名）。
-
 
 ---
 
@@ -290,14 +243,7 @@ ragmini/
 | 生成质量 | 答案主动区分「证据直接支持 / 证据不足 / 推测」，并指出与问题无关的证据不计入 |
 | 网页接口 | `/api/status` 正常；`/api/ask_stream` 逐阶段推送；`file://` 场景跨源预检与请求均通过 |
 | 安装器 | venv 创建 + 清华镜像装包 + `run.py` 自动切换解释器均验证通过 |
-| **期刊指标富集** | `ingest` 后自动执行，45 条分级写入 `journals` 表；`stats` 显示 `AMB Express 4档 Q2 IF=3.8 [search]` |
-| **档位参与打分** | `ask` 的 Top 证据带档位：`[1] Applied Soil Ecology(2021) [4档 Q1 IF 5.6]`，DeepSeek 生成带 `[n]` 的答案 |
-| **离线可降级** | 未设 `DEEPSEEK_API_KEY` 时 AI 兜底自动跳过（`--no-llm`），人工复核表部分照常生效 |
+| 期刊指标富集 | `ingest` 后自动执行，Top 证据与 `stats` 均显示档位 / JIF；未配 API Key 时 AI 兜底自动跳过 |
 
 单次提问耗时参考（3 篇小语料、模型已加载）：规范化 1.4 s、意图 1.1 s、粗筛 0.9 s、
 融合 10 ms、去重 <1 ms、分级 1 ms、重排 3.5 s（含模型加载）、生成 5.5 s。
-
-> **同源实现的主项目实测**（110 篇真实 PDF，用于校准抽取规则）：
-> PDF 直接抽出规范刊名 96 篇，其余 14 篇由文件名 + 别名表补齐，**110/110 全部正确**（改造前 44 个刊名为截断名）；
-> 档位分布 1档×3、2档×7、3档×8、4档×24、6档×1、未知×2（45 条中 43 条在用）；
-> 报告的「文献数合计」= 110，与库内 `documents` 数一致，可作为完整性自检。
