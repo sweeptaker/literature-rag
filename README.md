@@ -209,6 +209,11 @@ ragmini/
 也可手工下载 `BAAI/bge-m3`、`BAAI/bge-reranker-v2-m3` 的全部文件后按
 `模型/bge-m3/`、`模型/bge-reranker-v2-m3/` 放置（需含 `config.json`、`modules.json` 与权重文件）。
 
+**3b. 加载模型报 `PytorchStreamReader failed reading zip archive`**
+权重文件下载不完整（网络中断/代理断流导致）。删除对应模型目录后重跑安装器即可：
+Windows `rd /s /q 模型\bge-m3`，macOS `rm -rf 模型/bge-m3`（重排模型报错则删 `模型/bge-reranker-v2-m3`）。
+新版安装器会在每次安装时逐文件核对大小，发现截断文件自动断点续传/重下。
+
 **4. 首次提问很慢**
 第一次需要从磁盘加载 bge-m3（约 2.3 GB，20~30 秒）与重排模型。用 `serve` 模式时启动即预热，
 之后每次检索约 1 秒级。

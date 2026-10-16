@@ -190,22 +190,26 @@ BAD_TOKENS = ("onnx", "openvino", "tflite", "tf_model", "flax", "msgpack", ".h5"
 GOOD_EXT = (".json", ".model", ".txt", ".safetensors", ".bin", ".tiktoken")
 
 
-def http_get(url: str, timeout: int = 60, no_proxy: bool = False):
+def http_get(url: str, timeout: int = 60, no_proxy: bool = False,
+             headers: dict | None = None):
     """带代理诊断的 GET。no_proxy=True 时绕过环境变量里的代理。"""
-    req = urllib.request.Request(url, headers={"User-Agent": "ragmini-installer"})
+    h = {"User-Agent": "ragmini-installer"}
+    if headers:
+        h.update(headers)
+    req = urllib.request.Request(url, headers=h)
     if no_proxy:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         return opener.open(req, timeout=timeout)
     return urllib.request.urlopen(req, timeout=timeout)
 
 
-def http_get_robust(url: str, timeout: int = 60):
+def http_get_robust(url: str, timeout: int = 60, headers: dict | None = None):
     """先按环境（可能走代理）请求；失败则绕过代理再试一次。"""
     try:
-        return http_get(url, timeout=timeout)
+        return http_get(url, timeout=timeout, headers=headers)
     except Exception as first:  # noqa: BLE001
         try:
-            return http_get(url, timeout=timeout, no_proxy=True)
+            return http_get(url, timeout=timeout, no_proxy=True, headers=headers)
         except Exception as second:  # noqa: BLE001
             raise RuntimeError(f"{type(first).__name__}: {first}；"
                                f"绕过代理后同样失败（{type(second).__name__}: {second}）")
@@ -222,18 +226,27 @@ def show_network_env() -> None:
         say("      未检测到代理设置（直连）")
 
 
-def list_repo_files(repo: str, endpoint: str) -> list[str]:
-    """列出 HF 仓库文件（走镜像 API）。"""
-    url = f"{endpoint.rstrip('/')}/api/models/{repo}"
-    with http_get_robust(url, timeout=30) as r:
-        data = json.loads(r.read().decode("utf-8"))
-    return [s["rfilename"] for s in data.get("siblings", [])]
+def list_repo_files(repo: str, endpoint: str) -> dict[str, int]:
+    """列出 HF 仓库文件与大小。优先 tree 端点（含 size，用于完整性核对）；
+    失败退回 models 端点（无大小信息，记 0 = 不校验）。"""
+    try:
+        url = f"{endpoint.rstrip('/')}/api/models/{repo}/tree/main?recursive=true"
+        with http_get_robust(url, timeout=30) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return {s["path"]: int(s.get("size") or 0)
+                for s in data if s.get("type") == "file"}
+    except Exception:  # noqa: BLE001
+        url = f"{endpoint.rstrip('/')}/api/models/{repo}"
+        with http_get_robust(url, timeout=30) as r:
+            data = json.loads(r.read().decode("utf-8"))
+        return {s["rfilename"]: 0 for s in data.get("siblings", [])}
 
 
-def pick_files(files: list[str]) -> list[str]:
+def pick_files(files) -> list[str]:
     """挑选必需文件：过滤推理框架变体，优先 safetensors 而非 pytorch_model.bin。"""
+    names = list(files.keys() if isinstance(files, dict) else files)
     keep = []
-    for f in files:
+    for f in names:
         low = f.lower()
         if any(b in low for b in BAD_TOKENS):
             continue
@@ -249,41 +262,83 @@ def pick_files(files: list[str]) -> list[str]:
     return keep
 
 
-def download_file(url: str, dest: str, label: str = "") -> bool:
-    """流式下载到目标路径（只创建文件，不做重命名，兼容受限文件系统）。"""
+def download_file(url: str, dest: str, label: str = "", resume: bool = True) -> bool:
+    """流式下载（支持真·Range 断点续传），结束时核对总长度。
+
+    旧版两个坑（都会产生加载时 PytorchStreamReader corrupted 的截断文件）：
+      1. 流提前断掉时 read() 返回空、循环正常退出，未核对 Content-Length；
+      2. 「续传」直接以 ab 模式追加完整远端内容（没发 Range 头），
+         断点文件会被翻倍写坏。
+    现在的逻辑：本地已有部分字节 → 发 Range 请求；服务器支持（206）则续写，
+    不支持（200）则从头重写；无论哪条路径，结束后必须 done == 期望总长。
+    resume=False 表示调用方已知本地文件不可能续传（如本地比远端还大）。
+    """
     tmp_dir = os.path.dirname(dest)
     os.makedirs(tmp_dir, exist_ok=True)
-    try:
-        with http_get_robust(url) as r:
-            total = int(r.headers.get("Content-Length") or 0)
+    name = label or os.path.basename(dest)
+    for attempt in (0, 1):                    # 第 2 次尝试 = 放弃续传、从头重下
+        try:
             already = os.path.getsize(dest) if os.path.isfile(dest) else 0
-            if total and already == total:
-                say(f"        = {label or os.path.basename(dest)} 已存在（{human(total)}），跳过")
-                return True
-            t0, done, last_pct = time.time(), 0, -5
-            mode = "ab" if (already and total and already < total) else "wb"
-            done = already if mode == "ab" else 0
-            with open(dest, mode) as f:
-                while True:
-                    buf = r.read(1 << 20)
-                    if not buf:
-                        break
-                    f.write(buf)
-                    done += len(buf)
-                    if total:
-                        pct = int(done * 100 / total)
-                        if pct >= last_pct + 5:
-                            last_pct = pct
-                            sp = done / max(time.time() - t0, 1e-6)
-                            say(f"        {label or os.path.basename(dest)} "
-                                f"{pct:3d}%  {human(done)}/{human(total)}  {human(sp)}/s")
-            say(f"        ✓ {label or os.path.basename(dest)} 完成（{human(done)}，"
-                f"{time.time()-t0:.0f}s）")
-        return True
-    except Exception as e:  # noqa: BLE001
-        say(f"        ✗ 下载失败：{type(e).__name__}: {e}")
-        say(f"          可重跑本脚本续传，或手动下载：{url}")
-        return False
+            headers = ({"Range": f"bytes={already}-"}
+                       if already > 0 and resume and attempt == 0 else None)
+            with http_get_robust(url, headers=headers) as r:
+                status = getattr(r, "status", None) or getattr(r, "getcode", lambda: 0)()
+                length = int(r.headers.get("Content-Length") or 0)
+                if already > 0 and status == 206:
+                    start, mode, expected = already, "ab", already + length
+                    if length == 0:
+                        say(f"        = {name} 已存在（{human(already)}），跳过")
+                        return True
+                else:
+                    start, mode, expected = 0, "wb", length
+                    already = 0
+                t0, done, last_pct = time.time(), start, -5
+                with open(dest, mode) as f:
+                    while True:
+                        buf = r.read(1 << 20)
+                        if not buf:
+                            break
+                        f.write(buf)
+                        done += len(buf)
+                        if expected:
+                            pct = int(done * 100 / expected)
+                            if pct >= last_pct + 5:
+                                last_pct = pct
+                                sp = (done - start) / max(time.time() - t0, 1e-6)
+                                say(f"        {name} {pct:3d}%  {human(done)}/"
+                                    f"{human(expected)}  {human(sp)}/s")
+            if expected and done != expected:
+                say(f"        ✗ {name} 下载不完整：{human(done)}/{human(expected)}"
+                    f"（疑似网络中断）")
+                say("          文件已保留，重跑本脚本将从断点续传")
+                return False
+            say(f"        ✓ {name} 完成（{human(done)}，{time.time()-t0:.0f}s）")
+            return True
+        except urllib.error.HTTPError as e:
+            if e.code == 416 and attempt == 0:
+                # 本地文件比远端还大（坏在别处）→ 丢掉续传，从头重下
+                say(f"        ⚠ {name} 已有字节超出远端范围（416），从头重下")
+                try:
+                    os.remove(dest)
+                except OSError:  # noqa: BLE001
+                    pass
+                continue
+            say(f"        ✗ 下载失败：HTTP {e.code} {e.reason}")
+            say(f"          可重跑本脚本续传，或手动下载：{url}")
+            return False
+        except Exception as e:  # noqa: BLE001
+            # http_get_robust 会把 HTTPError 包成 RuntimeError，只能按文本识别 416
+            if "416" in str(e) and attempt == 0:
+                say(f"        ⚠ {name} 已有字节超出远端范围（416），从头重下")
+                try:
+                    os.remove(dest)
+                except OSError:  # noqa: BLE001
+                    pass
+                continue
+            say(f"        ✗ 下载失败：{type(e).__name__}: {e}")
+            say(f"          可重跑本脚本续传，或手动下载：{url}")
+            return False
+    return False
 
 
 def step_models(dry: bool) -> bool:
@@ -318,20 +373,25 @@ def step_models(dry: bool) -> bool:
     for repo in MODELS:
         short = repo.split("/")[-1]
         target = os.path.join(model_dir, short)
-        if os.path.isfile(os.path.join(target, "config.json")) and not flag("--force-models"):
-            say(f"      ✓ {repo} 已存在，跳过（如需重下加 --force-models）")
-            continue
         say(f"      · {repo} → {target}")
-        files, used_ep, err = None, "", ""
+        files, sizes, used_ep, err = None, {}, "", ""
         for ep in endpoints:
             try:
-                files = pick_files(list_repo_files(repo, ep))
+                all_files = list_repo_files(repo, ep)
+                files = pick_files(all_files)
+                sizes = all_files if isinstance(all_files, dict) else {}
                 used_ep = ep
                 break
             except Exception as e:  # noqa: BLE001
                 err = f"{type(e).__name__}: {e}"
                 say(f"        端点 {ep} 不可用（{err}），尝试下一个…")
         if not files:
+            if os.path.isfile(os.path.join(target, "config.json")) \
+                    and not flag("--force-models"):
+                say(f"      ⚠ 无法联网核对文件清单，且 {short} 已存在 —— 跳过下载。")
+                say("        如权重加载报 PytorchStreamReader corrupted，请删除该模型目录后重跑，")
+                say(f"          例如：rd /s /q \"{target}\"   （Windows）")
+                continue
             say(f"      ✗ 无法获取文件清单（{err}）")
             say("        排查建议：")
             say("          * 换端点：python install.py --hf-endpoint https://huggingface.co")
@@ -343,15 +403,37 @@ def step_models(dry: bool) -> bool:
             continue
         if used_ep != primary:
             say(f"        （改用可用端点：{used_ep}）")
-        if dry:
-            say(f"        (dry-run) 将下载 {len(files)} 个文件：")
+
+        # 已存在的模型：逐文件核对大小，只重下「大小不符」的文件——
+        # 权重下载中途断流会产生截断文件（config.json 却是好的），必须修复
+        todo = list(files) if flag("--force-models") else None
+        if todo is None and os.path.isfile(os.path.join(target, "config.json")):
+            todo = []
             for f in files:
+                dest = os.path.join(target, f.replace("/", os.sep))
+                local = os.path.getsize(dest) if os.path.isfile(dest) else -1
+                rsize = int(sizes.get(f) or 0)
+                if rsize and local != rsize:
+                    say(f"        ✗ {f} 大小不符（本地 {human(max(local, 0))} / "
+                        f"远端 {human(rsize)}）—— 将重新下载")
+                    todo.append(f)
+            if not todo:
+                say(f"      ✓ {repo} 已存在且 {len(files)} 个文件大小核对通过，跳过")
+                continue
+        elif todo is None:
+            todo = list(files)
+        if dry:
+            say(f"        (dry-run) 将下载 {len(todo)} 个文件：")
+            for f in todo:
                 say(f"          - {f}")
             continue
-        for f in files:
+        for f in todo:
             url = f"{used_ep.rstrip('/')}/{repo}/resolve/main/{f}"
             dest = os.path.join(target, f.replace("/", os.sep))
-            if not download_file(url, dest, label=f"{short}/{f}"):
+            # 本地比远端还大 → 断点无意义，直接从头下（避免 416 往返）
+            local = os.path.getsize(dest) if os.path.isfile(dest) else -1
+            can_resume = not (local >= 0 and sizes.get(f) and local >= sizes[f])
+            if not download_file(url, dest, label=f"{short}/{f}", resume=can_resume):
                 all_ok = False
         # 校验最小可用性
         miss = [n for n in ("config.json", "modules.json")
